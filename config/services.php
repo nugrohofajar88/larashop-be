@@ -49,5 +49,27 @@ return [
     'checkout' => [
         'use_unique_code' => filter_var(env('CHECKOUT_USE_UNIQUE_CODE', true), FILTER_VALIDATE_BOOL),
     ],
+
+    'shipping' => [
+        // Pembagi berat volumetrik. Standar kurir domestik Indonesia = 6000.
+        'volumetric_divisor' => (int) env('SHIPPING_VOLUMETRIC_DIVISOR', 6000),
+    ],
+
+    'gemini' => [
+        'api_key' => env('GEMINI_API_KEY'),
+        'model' => env('GEMINI_MODEL', 'gemini-3.1-flash-lite'),
+    ],
+
+    'openai' => [
+        'api_key' => env('OPENAI_API_KEY'),
+        'model' => env('OPENAI_MODEL', 'gpt-4o-mini'),
+    ],
+
+    'wablas' => [
+        'base_url' => env('WABLAS_BASE_URL', 'https://wablas.com'),
+        'token' => env('WABLAS_TOKEN'),
+        'secret_key' => env('WABLAS_SECRET_KEY'),
+        'webhook_secret' => env('WABLAS_WEBHOOK_SECRET'),
+    ],
 ];
 

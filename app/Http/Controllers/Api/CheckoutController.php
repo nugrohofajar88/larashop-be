@@ -121,14 +121,15 @@ class CheckoutController extends Controller
             return 1000;
         }
 
-        $weight = (int) $items->sum(function ($item): int {
-            $itemWeight = (int) ($item->weight_grams ?? $item->variant?->weight_grams ?? $item->product?->weight_grams ?? 0);
-            $quantity = max(1, (int) $item->quantity);
+        $lines = $items->map(fn ($item): array => [
+            'weight_grams' => (int) ($item->weight_grams ?? $item->variant?->weight_grams ?? $item->product?->weight_grams ?? 0),
+            'length_cm' => (float) ($item->variant?->length_cm ?? $item->product?->length_cm ?? 0),
+            'width_cm' => (float) ($item->variant?->width_cm ?? $item->product?->width_cm ?? 0),
+            'height_cm' => (float) ($item->variant?->height_cm ?? $item->product?->height_cm ?? 0),
+            'qty' => max(1, (int) $item->quantity),
+        ])->all();
 
-            return max(0, $itemWeight) * $quantity;
-        });
-
-        return max($weight, 1000);
+        return \App\Support\ShippingWeight::chargeableGrams($lines);
     }
 
     private function resolveShippingOptions(?\App\Models\ShipmentOrigin $origin, ?CustomerAddress $address, int $weight, ?int $userId = null): array

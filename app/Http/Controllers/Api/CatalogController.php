@@ -39,14 +39,6 @@ class CatalogController extends Controller
             }
         }
 
-        if ($search !== '') {
-            $products->where(function ($query) use ($search): void {
-                $query->where('name', 'like', '%'.$search.'%')
-                    ->orWhere('description', 'like', '%'.$search.'%')
-                    ->orWhereHas('category', fn ($categoryQuery) => $categoryQuery->where('name', 'like', '%'.$search.'%'));
-            });
-        }
-
         match ($sort) {
             'price_asc' => $products->orderBy('price'),
             'price_desc' => $products->orderByDesc('price'),
@@ -54,7 +46,17 @@ class CatalogController extends Controller
             default => $products->orderByDesc('is_featured')->orderByDesc('published_at')->orderBy('name'),
         };
 
-        $items = $products->get();
+        if ($search !== '') {
+            $terms = preg_split('/\s+/', $search, -1, PREG_SPLIT_NO_EMPTY) ?: [];
+            // Semua kata harus cocok (AND); kalau kosong, longgarkan ke OR.
+            $items = (clone $products)->whereSearchTerms($terms, false)->get();
+
+            if ($items->isEmpty()) {
+                $items = (clone $products)->whereSearchTerms($terms, true)->get();
+            }
+        } else {
+            $items = $products->get();
+        }
 
         return response()->json([
             'data' => $items->map(fn (Product $product) => ApiData::product($product))->values()->all(),

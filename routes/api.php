@@ -11,7 +11,12 @@ use App\Http\Controllers\Api\CatalogController;
 use App\Http\Controllers\Api\CheckoutController;
 use App\Http\Controllers\Api\CustomerController;
 use App\Http\Controllers\Api\OrderController;
+use App\Http\Controllers\Api\ShippingController;
+use App\Http\Controllers\Api\WablasWebhookController;
 use Illuminate\Support\Facades\Route;
+
+// Webhook publik (dipanggil layanan luar). Tanpa auth & tanpa throttle ketat.
+Route::post('v1/webhooks/wablas', [WablasWebhookController::class, 'handle'])->name('webhooks.wablas');
 
 Route::prefix('v1')->middleware('throttle:api')->group(function (): void {
     Route::prefix('auth')->group(function (): void {
@@ -21,6 +26,10 @@ Route::prefix('v1')->middleware('throttle:api')->group(function (): void {
 
     Route::get('/products', [CatalogController::class, 'index']);
     Route::get('/products/{slug}', [CatalogController::class, 'show']);
+
+    // Cek ongkir publik (tanpa login) — cari wilayah + hitung tarif.
+    Route::get('/shipping/destinations', [ShippingController::class, 'destinations']);
+    Route::get('/shipping/cost', [ShippingController::class, 'cost']);
 
     Route::middleware(['auth:sanctum'])->group(function (): void {
         Route::get('/auth/me', [AuthController::class, 'me']);

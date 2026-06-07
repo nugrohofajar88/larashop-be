@@ -66,4 +66,31 @@ class Product extends Model
     {
         return $this->hasMany(ProductVariant::class)->orderBy('sort_order')->orderBy('id');
     }
+
+    /**
+     * Filter produk yang cocok dengan kumpulan kata kunci.
+     * Tiap kata dicocokkan (LIKE) ke nama, deskripsi singkat, deskripsi, atau nama kategori.
+     *
+     * @param  array<int, string>  $terms
+     * @param  bool  $matchAny  false = semua kata harus cocok (AND); true = salah satu (OR).
+     */
+    public function scopeWhereSearchTerms($query, array $terms, bool $matchAny = false)
+    {
+        if ($terms === []) {
+            return $query;
+        }
+
+        return $query->where(function ($outer) use ($terms, $matchAny): void {
+            foreach ($terms as $term) {
+                $clause = function ($sub) use ($term): void {
+                    $sub->where('name', 'like', '%'.$term.'%')
+                        ->orWhere('short_description', 'like', '%'.$term.'%')
+                        ->orWhere('description', 'like', '%'.$term.'%')
+                        ->orWhereHas('category', fn ($category) => $category->where('name', 'like', '%'.$term.'%'));
+                };
+
+                $matchAny ? $outer->orWhere($clause) : $outer->where($clause);
+            }
+        });
+    }
 }
