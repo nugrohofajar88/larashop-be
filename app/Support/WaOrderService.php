@@ -4,23 +4,23 @@ namespace App\Support;
 
 use App\Models\CustomerAddress;
 use App\Models\Order;
+use App\Models\PaymentAccount;
 use App\Models\Product;
-use App\Models\ShipmentOrigin;
 use App\Models\User;
-use App\Models\UserUniqueCode;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
 
 /**
- * Alur pemesanan via WhatsApp (state machine percakapan).
+ * Pemesanan via WhatsApp dengan FORM (deterministik, minim AI).
  *
- * Langkah:
- *   /pesan -> pilih item -> cari wilayah -> pilih wilayah -> pilih ongkir
- *          -> nama & alamat -> order dibuat (pending_payment).
+ * Alur:
+ *   /pesan -> bot kirim form kosong (Nama/No HP/Alamat/Pesanan)
+ *   Pelanggan isi & kirim -> sistem parse (regex), cocokkan item ke katalog
+ *   (product_id, cek stok, ambil berat), cari ongkir dari alamat,
+ *   kirim ringkasan -> "YA" -> order pending_payment.
  *
- * State percakapan disimpan di Cache per nomor (TTL 1 jam).
+ * State percakapan di Cache per nomor (TTL 1 jam).
  */
 class WaOrderService
 {
@@ -41,10 +41,6 @@ class WaOrderService
         return in_array(strtolower(trim($text)), ['/pesan', 'pesan', 'order', '/order'], true);
     }
 
-    /**
-     * Pengingat lanjutan kalau ada sesi order yang belum selesai (sesuai langkahnya).
-     * null kalau tidak ada sesi.
-     */
     public function continueHint(string $phone): ?string
     {
         $session = Cache::get($this->key($phone));
@@ -53,25 +49,23 @@ class WaOrderService
             return null;
         }
 
+        // Di langkah konfirmasi: tampilkan ulang ringkasan pesanan (halaman proses order).
+        if (($session['step'] ?? '') === 'await_confirm') {
+            return "📌 Pesananmu tadi belum dikonfirmasi:\n\n".$this->buildConfirmation($session);
+        }
+
         $action = match ($session['step'] ?? '') {
-            'await_product', 'await_more' => 'ketik *nomor produk*',
-            'await_variant' => 'ketik *nomor varian* (atau sekalian jumlah, mis. *1-2*)',
-            'await_qty' => 'ketik *jumlah*-nya',
-            'await_destination_query' => 'ketik *nama kecamatan/kota tujuan*',
-            'await_destination_pick' => 'balas *angka wilayah* pilihan',
-            'await_shipping_pick' => 'balas *angka layanan kirim* pilihan',
-            'await_recipient' => 'ketik *Nama | Alamat lengkap*',
+            'await_form' => 'lengkapi & kirim form pesanannya',
+            'await_destination' => 'ketik *kelurahan/desa, kecamatan, kota* tujuan',
             default => 'balas pesan terakhir untuk melanjutkan',
         };
 
         return "📌 Oh ya, pesananmu tadi belum selesai. Kalau mau lanjut, {$action}. Ketik *batal* untuk membatalkan.";
     }
 
-    /**
-     * Proses satu pesan dalam alur order. Mengembalikan teks balasan.
-     */
     public function handle(string $phone, string $message): string
     {
+        $message = $this->cleanInvisible($message);
         $text = trim($message);
         $lower = strtolower($text);
 
@@ -92,16 +86,25 @@ class WaOrderService
         }
 
         return match ($session['step'] ?? '') {
-            'await_product' => $this->handleProduct($phone, $session, $text),
-            'await_variant' => $this->handleVariant($phone, $session, $text),
-            'await_qty' => $this->handleQty($phone, $session, $text),
-            'await_more' => $this->handleMore($phone, $session, $text),
-            'await_destination_query' => $this->handleDestinationQuery($phone, $session, $text),
-            'await_destination_pick' => $this->handleDestinationPick($phone, $session, $text),
-            'await_shipping_pick' => $this->handleShippingPick($phone, $session, $text),
-            'await_recipient' => $this->handleRecipient($phone, $session, $text),
+            'await_form' => $this->handleForm($phone, $session, $text),
+            'await_destination' => $this->handleDestination($phone, $session, $text),
+            'await_confirm' => $this->handleConfirm($phone, $session, $text),
             default => $this->start($phone),
         };
+    }
+
+    /**
+     * Bersihkan karakter tak terlihat yang sering ikut saat copy-paste dari
+     * WhatsApp/keyboard (zero-width space, BOM, soft hyphen, non-breaking space)
+     * dan merusak parsing form/regex — mis. "A\u{200B}lamat:" jadi tak cocok.
+     */
+    protected function cleanInvisible(string $text): string
+    {
+        // Zero-width & sejenis -> hapus.
+        $text = (string) preg_replace('/[\x{200B}-\x{200D}\x{2060}\x{FEFF}\x{00AD}\x{180E}]/u', '', $text);
+
+        // Non-breaking / narrow no-break space -> spasi biasa.
+        return (string) preg_replace('/[\x{00A0}\x{202F}]/u', ' ', $text);
     }
 
     /* ----------------------------------------------------------------- */
@@ -110,296 +113,433 @@ class WaOrderService
 
     protected function start(string $phone): string
     {
-        $products = Product::query()->with('variants')->orderBy('id')->limit(30)->get();
+        $this->put($phone, ['step' => 'await_form']);
 
-        if ($products->isEmpty()) {
-            return "Maaf, belum ada produk yang bisa dipesan.";
-        }
+        // Pesan 1: FORM MURNI. Sengaja berhenti tepat setelah "Pesanan:\n- " —
+        // tidak ada teks setelahnya, supaya kalau pelanggan meng-copas seluruh
+        // pesan tidak ada baris contoh/instruksi yang ikut ter-parse jadi item
+        // (parseForm membaca SEMUA teks setelah "Pesanan:").
+        $this->wablas->sendMessage(
+            $phone,
+            "📝 *Form Pesanan Sobat Akar Tani Kimia*\n\n"
+            ."Salin pesan ini, isi, lalu kirim:\n\n"
+            ."Nama: \n"
+            ."No HP: \n"
+            ."Alamat: \n"
+            ."Pesanan:\n"
+            ."- "
+        );
 
-        $lines = $products->map(function (Product $p): string {
-            $price = $this->money((int) $p->price);
+        // Pesan 2: INSTRUKSI terpisah. Tanpa header "Pesanan:" dan tanpa baris
+        // diawali "-", jadi aman walau ikut di-copas (tak jadi item hantu).
+        $this->wablas->sendMessage(
+            $phone,
+            "ℹ️ *Cara mengisi:*\n\n"
+            ."Tulis tiap produk + jumlahnya. Contoh:\n"
+            ."Pupuk NPK 5 kg x2\n"
+            ."Pestisida Organik 1 liter\n\n"
+            ."• Lihat daftar produk → ketik */katalog*\n"
+            ."• Batalkan → ketik *batal*"
+        );
 
-            return "{$p->id}. {$p->name} — {$price} (stok {$p->stock})";
-        })->implode("\n");
-
-        $this->put($phone, ['step' => 'await_product', 'items' => []]);
-
-        return "🛒 *Pesan via WhatsApp*\n\n{$lines}\n\n"
-            ."Ketik *nomor produk* yang ingin dipesan (contoh: *1*).\n\n"
-            ."Ketik *batal* untuk berhenti.";
+        // Balasan sudah dikirim langsung (2 pesan); kembalikan kosong supaya
+        // WaBotService tidak mengirim pesan ketiga.
+        return '';
     }
 
-    protected function handleProduct(string $phone, array $session, string $text): string
+    protected function handleForm(string $phone, array $session, string $text): string
     {
-        $id = (int) preg_replace('/\D/', '', $text);
-        $product = $id > 0 ? Product::query()->with('variants')->find($id) : null;
+        $form = $this->parseForm($text);
 
-        if ($product === null) {
-            return "Produk tidak ditemukan. Ketik *nomor produk* dari daftar (contoh: *1*).";
+        $missing = [];
+        if ($form['name'] === '') {
+            $missing[] = 'Nama';
+        }
+        if ($form['address'] === '') {
+            $missing[] = 'Alamat';
+        }
+        if ($form['items'] === []) {
+            $missing[] = 'Pesanan';
         }
 
-        return $this->askVariantOrQty($phone, $session, $product);
-    }
+        if ($missing !== []) {
+            return "Mohon lengkapi: *".implode('*, *', $missing)."*.\n\nKirim ulang dengan format:\n"
+                ."Nama: \nNo HP: \nAlamat: \nPesanan:\n- ";
+        }
 
-    protected function askVariantOrQty(string $phone, array $session, Product $product): string
-    {
-        $variants = $product->variants->values();
+        // Cocokkan tiap item ke katalog.
+        $items = [];
+        $errors = [];
 
-        // Cuma 1 varian (atau tanpa varian) -> langsung tanya jumlah.
-        if ($variants->count() <= 1) {
-            $session['pending'] = [
-                'product_id' => $product->id,
-                'product_name' => $product->name,
-                'variant' => $this->variantData($variants->first(), $product),
-            ];
-            $session['step'] = 'await_qty';
+        foreach ($form['items'] as $raw) {
+            $match = $this->matchItem($raw);
+
+            if ($match === null) {
+                $errors[] = "❌ \"{$raw}\" tidak dikenali";
+                continue;
+            }
+
+            if ($match['qty'] > $match['stock']) {
+                $errors[] = "⚠️ {$match['name']} ({$match['variant_label']}): stok tinggal {$match['stock']}";
+                continue;
+            }
+
+            $items[] = $match;
+        }
+
+        if ($errors !== []) {
+            return "Ada item yang belum beres:\n".implode("\n", $errors)."\n\n"
+                ."Perbaiki bagian *Pesanan*-nya lalu kirim ulang formnya ya. 🙏";
+        }
+
+        // Pakai nomor WA pengirim kalau No HP di form kosong.
+        if ($form['phone'] === '') {
+            $form['phone'] = $phone;
+        }
+
+        $session['form'] = $form;
+        $session['items'] = $items;
+
+        // Cari wilayah tujuan dari alamat.
+        $dest = $this->resolveDestination($form['address']);
+
+        if ($dest === null) {
+            $session['step'] = 'await_destination';
             $this->put($phone, $session);
 
-            $label = $variants->first()->label ?? '-';
-
-            return "Berapa jumlah *{$product->name}* ({$label})? Ketik angka, contoh: *2*";
+            return "📍 Alamatnya belum bisa kami temukan otomatis untuk hitung ongkir.\n"
+                ."Tolong ketik *kelurahan/desa, kecamatan, kota* tujuan.\nContoh: *Pagentan, Singosari, Malang*";
         }
 
-        // Banyak varian -> minta pilih dulu.
-        $session['pending'] = ['product_id' => $product->id, 'product_name' => $product->name];
-        $session['variant_list'] = $variants->map(fn ($v): array => $this->variantData($v, $product))->all();
-        $session['step'] = 'await_variant';
+        return $this->proceedToConfirm($phone, $session, $dest);
+    }
+
+    protected function handleDestination(string $phone, array $session, string $text): string
+    {
+        $trimmed = trim($text);
+
+        // Kalau pelanggan membalas NOMOR & ada daftar pilihan wilayah -> pilih itu.
+        if (preg_match('/^\d{1,2}$/', $trimmed) === 1 && ! empty($session['dest_options'])) {
+            $opts = $session['dest_options'];
+            $idx = (int) $trimmed - 1;
+
+            if (! isset($opts[$idx])) {
+                return "Nomor tidak valid. Balas angka *1*–*".count($opts)."* sesuai daftar di atas.";
+            }
+
+            unset($session['dest_options']);
+
+            return $this->proceedToConfirm($phone, $session, $opts[$idx]);
+        }
+
+        $results = $this->searchDestinations($trimmed);
+
+        if ($results === []) {
+            return "Wilayah \"{$trimmed}\" tidak ditemukan. Coba ketik *kelurahan/desa, kecamatan, kota* (contoh: *Pagentan, Singosari, Malang*).";
+        }
+
+        // Satu kecocokan -> langsung lanjut.
+        if (count($results) === 1) {
+            unset($session['dest_options']);
+
+            return $this->proceedToConfirm($phone, $session, $results[0]);
+        }
+
+        // Banyak kecocokan -> tampilkan daftar bernomor supaya pelanggan pilih yang tepat.
+        $session['dest_options'] = $results;
         $this->put($phone, $session);
 
-        $list = $variants->values()->map(
-            fn ($v, int $i): string => ($i + 1).". {$v->label} — ".$this->money((int) $v->price)." (stok {$v->stock})"
+        $list = collect($results)
+            ->map(fn (array $r, int $i): string => '*'.($i + 1).'*. '.$r['label'])
+            ->implode("\n");
+
+        return "📍 Ada beberapa wilayah yang cocok. Balas *nomor* tujuan yang benar:\n\n{$list}\n\n"
+            ."Kalau belum ada yang pas, ketik lebih lengkap: *kelurahan/desa, kecamatan, kota*.";
+    }
+
+    protected function proceedToConfirm(string $phone, array $session, array $dest): string
+    {
+        $itemsValue = (int) collect($session['items'])->sum(fn (array $i): int => (int) $i['price'] * (int) $i['qty']);
+        $options = $this->shippingOptions($dest['id'], $this->totalWeight($session['items']), $itemsValue);
+
+        if ($options === []) {
+            $session['step'] = 'await_destination';
+            $this->put($phone, $session);
+
+            return "Maaf, ongkir ke {$dest['label']} belum tersedia. Coba ketik wilayah lain (format: *kelurahan/desa, kecamatan, kota*).";
+        }
+
+        $shipping = collect($options)->sortBy('price_value')->first();
+        $uniqueCode = $this->usesUniqueCode() ? random_int(101, 999) : 0;
+
+        $session['destination'] = $dest;
+        $session['shipping'] = $shipping;
+        $session['unique_code'] = $uniqueCode;
+        $session['step'] = 'await_confirm';
+        $this->put($phone, $session);
+
+        return $this->buildConfirmation($session);
+    }
+
+    protected function buildConfirmation(array $session): string
+    {
+        $form = $session['form'];
+        $items = $session['items'];
+        $shipping = $session['shipping'];
+        $dest = $session['destination'];
+        $uniqueCode = (int) ($session['unique_code'] ?? 0);
+
+        $lines = collect($items)->map(
+            fn (array $i): string => "• {$i['qty']}x {$i['name']}".
+                (($i['variant_label'] ?? '') !== '' ? " ({$i['variant_label']})" : '').
+                " = ".$this->money($i['price'] * $i['qty'])
         )->implode("\n");
 
-        return "Pilih varian *{$product->name}*:\n\n{$list}\n\n"
-            ."Balas *nomorVarian-jumlah* (contoh: *1-2* = varian 1 sebanyak 2), atau ketik nomor variannya saja.";
+        $itemsTotal = (int) collect($items)->sum(fn (array $i): int => $i['price'] * $i['qty']);
+        $shippingTotal = (int) ($shipping['price_value'] ?? 0);
+        $grandTotal = $itemsTotal + $shippingTotal + $uniqueCode;
+
+        return "📋 *Konfirmasi Pesanan*\n\n"
+            ."Nama: {$form['name']}\n"
+            ."HP: {$form['phone']}\n"
+            ."Alamat: {$form['address']}\n"
+            ."Tujuan: {$dest['label']}\n\n"
+            ."{$lines}\n\n"
+            ."Subtotal: ".$this->money($itemsTotal)."\n"
+            ."Ongkir ({$shipping['service']}): ".$this->money($shippingTotal)."\n"
+            .($uniqueCode > 0 ? "Kode unik: ".$this->money($uniqueCode)."\n" : '')
+            ."*Total: ".$this->money($grandTotal)."*\n\n"
+            ."⚠️ *Pastikan TUJUAN di atas sudah benar* — ini yang menentukan ongkir & area pengiriman.\n\n"
+            ."• Balas *YA* untuk konfirmasi.\n"
+            ."• Tujuan belum pas? Ketik *ganti wilayah* untuk pilih ulang.\n"
+            ."• Atau perbaiki alamat lalu *kirim ulang form* (ongkir dihitung ulang otomatis).\n"
+            ."• Ketik *batal* untuk membatalkan.";
     }
 
-    protected function handleVariant(string $phone, array $session, string $text): string
-    {
-        $variants = $session['variant_list'] ?? [];
-
-        // Ambil angka di pesan: angka-1 = nomor varian, angka-2 (opsional) = jumlah.
-        preg_match_all('/\d+/', $text, $matches);
-        $nums = $matches[0] ?? [];
-
-        $pick = isset($nums[0]) ? (int) $nums[0] : 0;
-
-        if ($pick < 1 || $pick > count($variants)) {
-            return "Balas dengan angka varian yang ada di daftar (boleh sekalian jumlahnya, contoh: *1-2*).";
-        }
-
-        $variant = $variants[$pick - 1];
-
-        // Format gabungan: "varian-jumlah" -> langsung tambahkan.
-        if (isset($nums[1]) && (int) $nums[1] >= 1) {
-            $session['pending'] = array_merge($session['pending'] ?? [], ['variant' => $variant]);
-
-            return $this->commitItem($phone, $session, $variant, (int) $nums[1]);
-        }
-
-        // Hanya nomor varian -> tanya jumlah.
-        $session['pending'] = array_merge($session['pending'] ?? [], ['variant' => $variant]);
-        unset($session['variant_list']);
-        $session['step'] = 'await_qty';
-        $this->put($phone, $session);
-
-        return "Berapa jumlah *{$session['pending']['product_name']}* ({$variant['label']})? Ketik angka, contoh: *2*";
-    }
-
-    protected function handleQty(string $phone, array $session, string $text): string
-    {
-        $qty = (int) preg_replace('/\D/', '', $text);
-        $variant = $session['pending']['variant'] ?? null;
-
-        if ($variant === null) {
-            return $this->start($phone);
-        }
-
-        return $this->commitItem($phone, $session, $variant, $qty);
-    }
-
-    /**
-     * Tambahkan item ke keranjang sesi (dipakai jalur "varian-jumlah" maupun tanya-jumlah).
-     */
-    protected function commitItem(string $phone, array $session, array $variant, int $qty): string
-    {
-        if ($qty < 1) {
-            return "Ketik jumlah berupa angka, contoh: *2*";
-        }
-
-        if ($qty > (int) $variant['stock']) {
-            return "Stok *{$variant['label']}* cuma {$variant['stock']}. Ketik jumlah lebih kecil.";
-        }
-
-        $pending = $session['pending'] ?? [];
-
-        $session['items'][] = [
-            'product_id' => $pending['product_id'],
-            'product_variant_id' => $variant['id'],
-            'name' => $pending['product_name'],
-            'sku' => $variant['sku'],
-            'variant_label' => $variant['label'],
-            'price' => (int) $variant['price'],
-            'qty' => $qty,
-            'weight' => (int) $variant['weight'],
-            'length_cm' => $variant['length_cm'],
-            'width_cm' => $variant['width_cm'],
-            'height_cm' => $variant['height_cm'],
-        ];
-        unset($session['pending'], $session['variant_list']);
-        $session['step'] = 'await_more';
-        $this->put($phone, $session);
-
-        return $this->itemsSummary($session['items'])
-            ."\n\nKetik *nomor produk* lain untuk menambah, atau *selesai* untuk lanjut ke pengiriman.";
-    }
-
-    protected function handleMore(string $phone, array $session, string $text): string
+    protected function handleConfirm(string $phone, array $session, string $text): string
     {
         $lower = strtolower(trim($text));
 
-        if (in_array($lower, ['selesai', 'lanjut', 'checkout', 'done', 'lanjutkan'], true)) {
-            if (($session['items'] ?? []) === []) {
-                return "Belum ada item. Ketik *nomor produk* dulu.";
-            }
-
-            $session['step'] = 'await_destination_query';
-            $this->put($phone, $session);
-
-            return "Sip! Sekarang ketik *nama kecamatan/kota tujuan* untuk cek ongkir.\nContoh: *Lowokwaru* atau *Bogor*";
+        // Pelanggan KIRIM ULANG FORM (mis. perbaiki alamat) -> proses ulang dari awal:
+        // re-parse, cocokkan item, resolve wilayah, lalu HITUNG ULANG ONGKIR.
+        if (preg_match('/(alamat|pesanan)\s*:/i', $text) === 1) {
+            return $this->handleForm($phone, $session, $text);
         }
 
-        // Selain 'selesai', anggap user mengetik nomor produk lain.
-        return $this->handleProduct($phone, $session, $text);
+        // Ganti wilayah tujuan kalau hasil auto-pilih kurang pas.
+        if (in_array($lower, ['ganti wilayah', 'ubah wilayah', 'ganti tujuan', 'ubah tujuan', 'ganti alamat', 'wilayah', 'tujuan'], true)) {
+            $session['step'] = 'await_destination';
+            unset($session['dest_options']);
+            $this->put($phone, $session);
+
+            return "Baik 👍 Ketik *kelurahan/desa, kecamatan, kota* tujuan yang benar.\nContoh: *Pagentan, Singosari, Malang*";
+        }
+
+        if (! in_array($lower, ['ya', 'y', 'ok', 'oke', 'betul', 'benar', 'setuju', 'iya', 'lanjut'], true)) {
+            // Selain YA/batal/ganti wilayah -> tampilkan ulang ringkasan (halaman proses order).
+            return $this->buildConfirmation($session);
+        }
+
+        $order = $this->createOrder($phone, $session);
+        $reply = $this->orderConfirmation($order, $session);
+        $this->forget($phone);
+
+        return $reply;
     }
 
-    protected function variantData($variant, ?Product $product = null): array
+    /* ----------------------------------------------------------------- */
+    /* Parsing & matching                                                 */
+    /* ----------------------------------------------------------------- */
+
+    /**
+     * @return array{name:string,phone:string,address:string,items:array<int,string>}
+     */
+    protected function parseForm(string $text): array
     {
+        $name = '';
+        if (preg_match('/nama\s*:\s*(.+)/i', $text, $m)) {
+            $name = trim($m[1]);
+        }
+
+        $phone = '';
+        if (preg_match('/\b(?:no\.?\s*hp|nomor|telp|telepon|hp|wa)\b[^\n:]*:\s*([+\d][\d\s().\-]+)/i', $text, $m)) {
+            $phone = preg_replace('/\D/', '', $m[1]);
+        }
+
+        $address = '';
+        if (preg_match('/alamat\s*:\s*(.+?)(?:\n\s*pesanan\s*:|\z)/is', $text, $m)) {
+            $address = trim(preg_replace('/\s+/', ' ', $m[1]));
+        }
+
+        $items = [];
+        if (preg_match('/pesanan\s*:\s*(.+)\z/is', $text, $m)) {
+            foreach (preg_split('/\n/', $m[1]) as $line) {
+                $line = trim(ltrim(trim($line), "-•*\t "));
+
+                if ($line === '') {
+                    continue;
+                }
+
+                $low = strtolower($line);
+                if (str_starts_with($low, 'ongkir') || str_starts_with($low, 'total')
+                    || str_starts_with($low, 'subtotal') || str_starts_with($low, 'jumlah')) {
+                    continue;
+                }
+
+                $items[] = $line;
+            }
+        }
+
+        return ['name' => $name, 'phone' => (string) $phone, 'address' => $address, 'items' => $items];
+    }
+
+    /**
+     * Cocokkan satu baris pesanan ke produk+varian di katalog. null kalau tak cocok.
+     */
+    protected function matchItem(string $raw): ?array
+    {
+        // Buang harga di akhir baris (": 140.000" / "- 140.000").
+        $text = (string) preg_replace('/[:\-]\s*(?:rp)?\s*[\d.,]+\s*$/i', '', $raw);
+
+        // Jumlah: "x2", "2x", "2 pcs/botol/pack/sachet".
+        $qty = 1;
+        if (preg_match('/\bx\s*(\d{1,3})\b/i', $text, $m)
+            || preg_match('/\b(\d{1,3})\s*x\b/i', $text, $m)
+            || preg_match('/\b(\d{1,3})\s*(?:pcs|pc|botol|pack|pak|sachet|sct|buah|biji)\b/i', $text, $m)) {
+            $qty = max(1, (int) $m[1]);
+            $text = (string) preg_replace('/\bx\s*\d{1,3}\b|\b\d{1,3}\s*x\b|\b\d{1,3}\s*(?:pcs|pc|botol|pack|pak|sachet|sct|buah|biji)\b/i', ' ', $text);
+        }
+
+        $words = array_values(array_filter(
+            preg_split('/[^a-z0-9]+/i', strtolower(trim($text)), -1, PREG_SPLIT_NO_EMPTY),
+            fn ($w): bool => strlen($w) >= 2 || is_numeric($w),
+        ));
+
+        if ($words === []) {
+            return null;
+        }
+
+        $candidates = Product::query()->with('variants')->whereSearchTerms($words, true)->limit(25)->get();
+
+        if ($candidates->isEmpty()) {
+            return null;
+        }
+
+        $best = null;
+        $bestScore = 0;
+
+        foreach ($candidates as $p) {
+            $variants = $p->variants->isNotEmpty() ? $p->variants->all() : [null];
+
+            foreach ($variants as $v) {
+                // Hanya nama produk + label varian (SKU dilewati supaya angka di
+                // kode SKU tidak menimbulkan kecocokan palsu, mis. "1 kg" vs "5 kg").
+                $hay = strtolower($p->name.' '.($v->label ?? ''));
+                $score = 0;
+
+                foreach ($words as $w) {
+                    if (str_contains($hay, $w)) {
+                        $score++;
+                    }
+                }
+
+                if ($score > $bestScore) {
+                    $bestScore = $score;
+                    $best = [$p, $v];
+                }
+            }
+        }
+
+        if ($best === null || $bestScore < max(1, (int) ceil(count($words) / 2))) {
+            return null;
+        }
+
+        [$p, $v] = $best;
+
         return [
-            'id' => $variant?->id,
-            'label' => $variant?->label ?? '-',
-            'sku' => $variant?->sku ?? $product?->sku,
-            'price' => (int) ($variant?->price ?? $product?->price ?? 0),
-            'stock' => (int) ($variant?->stock ?? $product?->stock ?? 0),
-            'weight' => (int) ($variant?->weight_grams ?? $product?->weight_grams ?? 0),
-            'length_cm' => (float) ($variant?->length_cm ?? $product?->length_cm ?? 0),
-            'width_cm' => (float) ($variant?->width_cm ?? $product?->width_cm ?? 0),
-            'height_cm' => (float) ($variant?->height_cm ?? $product?->height_cm ?? 0),
+            'product_id' => $p->id,
+            'product_variant_id' => $v->id ?? null,
+            'name' => $p->name,
+            'sku' => $v->sku ?? $p->sku,
+            'variant_label' => $v->label ?? null,
+            'price' => (int) ($v->price ?? $p->price),
+            'qty' => $qty,
+            'stock' => (int) ($v->stock ?? $p->stock),
+            'weight' => (int) ($v->weight_grams ?? $p->weight_grams ?? 0),
+            'length_cm' => (float) ($v->length_cm ?? $p->length_cm ?? 0),
+            'width_cm' => (float) ($v->width_cm ?? $p->width_cm ?? 0),
+            'height_cm' => (float) ($v->height_cm ?? $p->height_cm ?? 0),
         ];
     }
 
-    protected function handleDestinationQuery(string $phone, array $session, string $text): string
+    /**
+     * Cari wilayah tujuan dari teks alamat bebas (kode pos -> kecamatan/kota).
+     */
+    protected function resolveDestination(string $address): ?array
     {
-        if (mb_strlen($text) < 3) {
-            return "Ketik minimal 3 huruf nama wilayah tujuan. Contoh: *Bogor*";
+        $address = trim($address);
+
+        if ($address === '') {
+            return null;
         }
 
-        $results = $this->searchDestinations($text);
-
-        if ($results === []) {
-            return "Wilayah \"{$text}\" tidak ditemukan. Coba kata lain (nama kecamatan/kota).";
+        // a) Kode pos 5 digit = sinyal terkuat.
+        if (preg_match('/\b(\d{5})\b/', $address, $m)) {
+            $r = $this->searchDestinations($m[1]);
+            if ($r !== []) {
+                return $r[0];
+            }
         }
 
-        $session['destinations'] = $results;
-        $session['step'] = 'await_destination_pick';
-        $this->put($phone, $session);
-
-        $list = collect($results)->values()->map(
-            fn (array $d, int $i): string => ($i + 1).". {$d['label']}"
-        )->implode("\n");
-
-        return "📍 Pilih wilayah tujuan (balas angkanya):\n\n{$list}\n\nKalau tidak ada, ketik nama lain.";
-    }
-
-    protected function handleDestinationPick(string $phone, array $session, string $text): string
-    {
-        $pick = (int) preg_replace('/\D/', '', $text);
-        $results = $session['destinations'] ?? [];
-
-        if ($pick < 1 || $pick > count($results)) {
-            // Mungkin user mengetik nama wilayah baru, bukan angka.
-            return $this->handleDestinationQuery($phone, $session, $text);
+        // b) Nama wilayah dari kata kunci (kecamatan, kabupaten/kota).
+        $queries = [];
+        if (preg_match('/kec(?:amatan|\.)?\s+([a-z][a-z ]{2,28})/i', $address, $m)) {
+            $queries[] = trim($m[1]);
+        }
+        if (preg_match('/(?:kab(?:upaten|\.)?|kota)\s+([a-z][a-z ]{2,28})/i', $address, $m)) {
+            $queries[] = trim($m[1]);
         }
 
-        $destination = $results[$pick - 1];
-
-        $shipping = $this->shippingOptions($destination['id'], $this->totalWeight($session['items']));
-
-        if ($shipping === []) {
-            return "Maaf, ongkir ke wilayah itu belum tersedia. Coba pilih wilayah lain (ketik nama wilayah).";
+        foreach ($queries as $q) {
+            $r = $this->searchDestinations($q);
+            if ($r !== []) {
+                return $r[0];
+            }
         }
 
-        $session['destination'] = $destination;
-        $session['shipping_options'] = $shipping;
-        $session['step'] = 'await_shipping_pick';
-        $this->put($phone, $session);
-
-        $list = collect($shipping)->values()->map(
-            fn (array $s, int $i): string => ($i + 1).". {$s['service']} — {$s['price']} (estimasi {$s['estimate']})"
-        )->implode("\n");
-
-        return "🚚 Pilih layanan kirim (balas angkanya):\n\n{$list}";
-    }
-
-    protected function handleShippingPick(string $phone, array $session, string $text): string
-    {
-        $pick = (int) preg_replace('/\D/', '', $text);
-        $options = $session['shipping_options'] ?? [];
-
-        if ($pick < 1 || $pick > count($options)) {
-            return "Balas dengan angka layanan kirim yang ada di daftar ya.";
-        }
-
-        $session['shipping'] = $options[$pick - 1];
-        $session['step'] = 'await_recipient';
-        $this->put($phone, $session);
-
-        return "Hampir selesai! Ketik *nama penerima* dan *alamat lengkap*, pisahkan dengan tanda |\n\n"
-            ."Contoh:\n*Budi Santoso | Jl. Mawar No. 10 RT 1 RW 2, dekat masjid*";
-    }
-
-    protected function handleRecipient(string $phone, array $session, string $text): string
-    {
-        $parts = array_map('trim', explode('|', $text, 2));
-        $name = $parts[0] ?? '';
-        $addressLine = $parts[1] ?? '';
-
-        if ($name === '' || $addressLine === '') {
-            return "Formatnya: *Nama | Alamat lengkap*\nContoh: *Budi | Jl. Mawar 10, Bogor*";
-        }
-
-        $order = $this->createOrder($phone, $session, $name, $addressLine);
-
-        $this->forget($phone);
-
-        return $this->orderConfirmation($order);
+        return null;
     }
 
     /* ----------------------------------------------------------------- */
     /* Order creation                                                     */
     /* ----------------------------------------------------------------- */
 
-    protected function createOrder(string $phone, array $session, string $name, string $addressLine): Order
+    protected function createOrder(string $phone, array $session): Order
     {
-        $user = $this->findOrCreateCustomer($phone, $name);
+        $form = $session['form'];
+        $name = $form['name'];
+        $recipientPhone = $form['phone'] !== '' ? $form['phone'] : $phone;
+        $addressLine = $form['address'];
         $dest = $session['destination'];
         $shipping = $session['shipping'];
         $items = $session['items'];
+        $uniqueCode = (int) ($session['unique_code'] ?? 0);
 
         $itemsTotal = (int) collect($items)->sum(fn (array $i): int => $i['price'] * $i['qty']);
         $shippingTotal = (int) ($shipping['price_value'] ?? 0);
-        $uniqueCode = $this->usesUniqueCode() ? random_int(101, 999) : 0;
         $grandTotal = max(0, $itemsTotal + $shippingTotal + $uniqueCode);
 
         return DB::transaction(function () use (
-            $user, $dest, $shipping, $items, $addressLine, $name, $phone,
+            $phone, $name, $recipientPhone, $addressLine, $dest, $shipping, $items,
             $itemsTotal, $shippingTotal, $uniqueCode, $grandTotal
         ): Order {
+            $user = $this->findOrCreateCustomer($phone, $name);
+
             $address = CustomerAddress::query()->create([
                 'user_id' => $user->id,
                 'label' => 'Alamat WA',
                 'recipient_name' => $name,
-                'recipient_phone' => $phone,
+                'recipient_phone' => $recipientPhone,
                 'destination_id' => $dest['id'],
                 'province' => $dest['province_name'] ?? '',
                 'city' => $dest['city_name'] ?? '',
@@ -419,14 +559,17 @@ class WaOrderService
                 'payment_status' => 'Menunggu transfer',
                 'items_total' => $itemsTotal,
                 'shipping_total' => $shippingTotal,
+                'shipping_cashback' => (int) ($shipping['cashback_value'] ?? 0),
                 'unique_code' => $uniqueCode,
                 'used_unique_code' => 0,
                 'grand_total' => $grandTotal,
                 'shipping_service_name' => $shipping['service'] ?? null,
+                'shipping_courier_code' => $shipping['code'] ?? null,
+                'shipping_service_code' => $shipping['service_code'] ?? null,
                 'shipping_estimate_days' => $shipping['estimate'] ?? null,
-                'shipment_note' => 'Order via WhatsApp. Menunggu validasi pembayaran.',
+                'shipment_note' => 'Order via WhatsApp (form). Menunggu validasi pembayaran.',
                 'recipient_name' => $name,
-                'recipient_phone' => $phone,
+                'recipient_phone' => $recipientPhone,
                 'address_label' => $address->label,
                 'address_snapshot' => ApiData::addressSummary($address),
             ]);
@@ -445,40 +588,51 @@ class WaOrderService
                 ]);
             }
 
-            if ($uniqueCode > 0) {
-                UserUniqueCode::query()->create([
-                    'user_id' => $user->id,
-                    'value' => $uniqueCode,
-                    'ref_id' => $order->id,
-                    'type' => 'paid',
-                ]);
-            }
+            // Saldo kode unik (ledger UserUniqueCode) TIDAK dibuat di sini.
+            // Hanya dibuat saat admin memvalidasi pembayaran
+            // (AdminOrderController::validatePayment) supaya order yang masih
+            // pending_payment tidak menambah saldo kode unik yang bisa dipakai.
+
+            $order->logTracking('created', 'app');
 
             return $order->fresh('items');
         });
     }
 
-    protected function orderConfirmation(Order $order): string
+    protected function orderConfirmation(Order $order, array $session): string
     {
+        $form = $session['form'] ?? [];
+        $dest = $session['destination'] ?? [];
+
         $lines = $order->items->map(
             fn ($i): string => "• {$i->quantity}x {$i->product_name}".
                 ($i->variant_label ? " ({$i->variant_label})" : '').
                 " = ".$this->money((int) $i->subtotal)
         )->implode("\n");
 
+        $rekening = PaymentAccount::query()->active()->ordered()->get();
+        $rekText = $rekening->isEmpty() ? '' : "\n💳 *Transfer ke salah satu rekening:*\n".$rekening->map(
+            fn (PaymentAccount $a): string => "• {$a->bank_name}: *{$a->account_number}* a.n. {$a->account_holder}"
+        )->implode("\n")."\n";
+
         return "✅ *Pesanan berhasil dibuat!*\n\n"
             ."Kode: *{$order->code}*\n\n"
+            ."Nama: ".($form['name'] ?? $order->recipient_name)."\n"
+            ."HP: ".($form['phone'] ?? $order->recipient_phone)."\n"
+            ."Alamat: ".($form['address'] ?? '')."\n"
+            ."Tujuan: ".($dest['label'] ?? '')."\n\n"
             ."{$lines}\n"
             ."Subtotal: ".$this->money((int) $order->items_total)."\n"
             ."Ongkir: ".$this->money((int) $order->shipping_total)."\n"
             .($order->unique_code > 0 ? "Kode unik: ".$this->money((int) $order->unique_code)."\n" : '')
-            ."*Total transfer: ".$this->money((int) $order->grand_total)."*\n\n"
-            ."Silakan transfer sesuai *total di atas (termasuk kode unik)* lalu kirim bukti ke chat ini. "
+            ."*Total transfer: ".$this->money((int) $order->grand_total)."*\n"
+            .$rekText
+            ."\nSilakan transfer sesuai *total di atas (termasuk kode unik)* lalu kirim bukti ke chat ini. "
             ."Admin akan memvalidasi pembayaranmu. 🙏";
     }
 
     /* ----------------------------------------------------------------- */
-    /* RajaOngkir                                                          */
+    /* Ongkir (delegasi ke ShippingService)                               */
     /* ----------------------------------------------------------------- */
 
     protected function searchDestinations(string $search): array
@@ -486,26 +640,9 @@ class WaOrderService
         return app(ShippingService::class)->searchDestinations($search, 5);
     }
 
-    protected function shippingOptions(int|string $destinationId, int $weight): array
+    protected function shippingOptions(int|string $destinationId, int $weight, int $itemValue = 0): array
     {
-        return app(ShippingService::class)->costOptions($destinationId, $weight);
-    }
-
-    /* ----------------------------------------------------------------- */
-    /* Helpers                                                            */
-    /* ----------------------------------------------------------------- */
-
-    protected function itemsSummary(array $items): string
-    {
-        $lines = collect($items)->map(
-            fn (array $i): string => "• {$i['qty']}x {$i['name']}".
-                (($i['variant_label'] ?? '') !== '' ? " ({$i['variant_label']})" : '').
-                " = ".$this->money($i['price'] * $i['qty'])
-        )->implode("\n");
-
-        $total = collect($items)->sum(fn (array $i): int => $i['price'] * $i['qty']);
-
-        return "Ringkasan sementara:\n{$lines}\nSubtotal: ".$this->money((int) $total);
+        return app(ShippingService::class)->costOptions($destinationId, $weight, $itemValue);
     }
 
     protected function totalWeight(array $items): int
@@ -518,6 +655,10 @@ class WaOrderService
             'qty' => (int) $i['qty'],
         ], $items));
     }
+
+    /* ----------------------------------------------------------------- */
+    /* Helpers                                                            */
+    /* ----------------------------------------------------------------- */
 
     protected function findOrCreateCustomer(string $phone, string $name): User
     {
@@ -534,9 +675,7 @@ class WaOrderService
             'phone' => $phone,
             'role' => 'customer',
             'status' => 'active',
-            // Default password = username (nomor WA). Cast 'hashed' di model User
-            // otomatis meng-hash nilai ini saat disimpan.
-            'password' => $phone,
+            'password' => $phone, // default = nomor WA (cast 'hashed' di model User)
         ]);
     }
 
@@ -554,17 +693,12 @@ class WaOrderService
 
     protected function usesUniqueCode(): bool
     {
-        return (bool) config('services.checkout.use_unique_code', true);
+        return \App\Models\Setting::uniqueCodeEnabled();
     }
 
     protected function money(int $value): string
     {
         return 'Rp'.number_format($value, 0, ',', '.');
-    }
-
-    protected function rajaBase(): string
-    {
-        return rtrim((string) config('services.rajaongkir.base_url'), '/').'/';
     }
 
     protected function key(string $phone): string

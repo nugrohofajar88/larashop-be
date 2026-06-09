@@ -2,22 +2,44 @@
 
 namespace Database\Seeders;
 
-use App\Models\Category;
 use Illuminate\Database\Seeder;
+use Illuminate\Support\Facades\DB;
 
 class CategorySeeder extends Seeder
 {
-    /**
-     * Run the database seeds.
-     */
     public function run(): void
     {
-        Category::query()->delete();
-
-        Category::insert([
-            ['name' => 'Pupuk', 'slug' => 'pupuk', 'description' => 'Nutrisi dan pemupukan tanaman', 'is_active' => true, 'sort_order' => 1, 'created_at' => now(), 'updated_at' => now()],
-            ['name' => 'Benih', 'slug' => 'benih', 'description' => 'Benih unggul dan bibit', 'is_active' => true, 'sort_order' => 2, 'created_at' => now(), 'updated_at' => now()],
-            ['name' => 'Perlindungan Tanaman', 'slug' => 'perlindungan-tanaman', 'description' => 'Pestisida dan fungisida', 'is_active' => true, 'sort_order' => 3, 'created_at' => now(), 'updated_at' => now()],
+        DB::table('categories')->insert([
+            [
+                'id' => 1,
+                'name' => 'Insektisida',
+                'slug' => 'insektisida',
+                'description' => 'Pengendali serangga & hama',
+                'is_active' => 1,
+                'sort_order' => 1,
+                'created_at' => '2026-06-09 08:46:37',
+                'updated_at' => '2026-06-09 08:46:37',
+            ],
+            [
+                'id' => 2,
+                'name' => 'Fungisida',
+                'slug' => 'fungisida',
+                'description' => 'Pengendali penyakit jamur',
+                'is_active' => 1,
+                'sort_order' => 2,
+                'created_at' => '2026-06-09 08:46:37',
+                'updated_at' => '2026-06-09 08:46:37',
+            ],
+            [
+                'id' => 3,
+                'name' => 'ZPT & Hormon',
+                'slug' => 'zpt-hormon',
+                'description' => 'Zat pengatur tumbuh, hormon & biostimulan',
+                'is_active' => 1,
+                'sort_order' => 3,
+                'created_at' => '2026-06-09 08:46:37',
+                'updated_at' => '2026-06-09 08:46:37',
+            ],
         ]);
     }
 }

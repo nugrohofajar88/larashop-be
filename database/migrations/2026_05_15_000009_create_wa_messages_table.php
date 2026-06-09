@@ -8,10 +8,10 @@ return new class extends Migration
 {
     public function up(): void
     {
-        Schema::create('wa_messages', function (Blueprint $table): void {
+        Schema::create('wa_messages', function (Blueprint $table) {
             $table->id();
             $table->string('phone', 30);
-            $table->string('direction', 3); // in / out
+            $table->string('direction', 3);
             $table->string('name')->nullable();
             $table->text('message')->nullable();
             $table->string('type', 30)->default('text');

@@ -21,6 +21,7 @@ class ShipmentOrigin extends Model
         'subdistrict',
         'postal_code',
         'address_line',
+        'pin_point',
         'note',
         'is_default',
         'is_active',

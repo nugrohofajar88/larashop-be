@@ -1,9 +1,12 @@
 <?php
 
 use App\Http\Controllers\Api\AdminAccountController;
+use App\Http\Controllers\Api\AdminCategoryController;
 use App\Http\Controllers\Api\AdminCustomerController;
 use App\Http\Controllers\Api\AdminOrderController;
+use App\Http\Controllers\Api\AdminPaymentAccountController;
 use App\Http\Controllers\Api\AdminProductController;
+use App\Http\Controllers\Api\AdminSettingController;
 use App\Http\Controllers\Api\AdminShipmentController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\CartController;
@@ -12,11 +15,13 @@ use App\Http\Controllers\Api\CheckoutController;
 use App\Http\Controllers\Api\CustomerController;
 use App\Http\Controllers\Api\OrderController;
 use App\Http\Controllers\Api\ShippingController;
+use App\Http\Controllers\Api\KomerceWebhookController;
 use App\Http\Controllers\Api\WablasWebhookController;
 use Illuminate\Support\Facades\Route;
 
 // Webhook publik (dipanggil layanan luar). Tanpa auth & tanpa throttle ketat.
 Route::post('v1/webhooks/wablas', [WablasWebhookController::class, 'handle'])->name('webhooks.wablas');
+Route::match(['post', 'put'], 'v1/webhooks/komerce/{token?}', [KomerceWebhookController::class, 'handle'])->name('webhooks.komerce');
 
 Route::prefix('v1')->middleware('throttle:api')->group(function (): void {
     Route::prefix('auth')->group(function (): void {
@@ -80,11 +85,25 @@ Route::prefix('v1')->middleware('throttle:api')->group(function (): void {
         Route::post('/orders/{order}/validate-payment', [AdminOrderController::class, 'validatePayment']);
         Route::post('/orders/{order}/cancel', [AdminOrderController::class, 'cancel']);
         Route::post('/orders/{order}/process-shipment', [AdminOrderController::class, 'processShipment']);
+        Route::post('/orders/{order}/schedule-pickup', [AdminOrderController::class, 'schedulePickup']);
         Route::post('/orders/{order}/complete', [AdminOrderController::class, 'complete']);
         Route::get('/shipments', [AdminShipmentController::class, 'index']);
         Route::get('/shipment-destinations/search', [AdminShipmentController::class, 'searchDestinations']);
         Route::get('/shipment-settings', [AdminShipmentController::class, 'settings']);
         Route::put('/shipment-settings', [AdminShipmentController::class, 'updateSettings']);
         Route::get('/shipments/{code}', [AdminShipmentController::class, 'show']);
+
+        Route::get('/payment-accounts', [AdminPaymentAccountController::class, 'index']);
+        Route::post('/payment-accounts', [AdminPaymentAccountController::class, 'store']);
+        Route::put('/payment-accounts/{paymentAccount}', [AdminPaymentAccountController::class, 'update']);
+        Route::delete('/payment-accounts/{paymentAccount}', [AdminPaymentAccountController::class, 'destroy']);
+
+        Route::get('/categories', [AdminCategoryController::class, 'index']);
+        Route::post('/categories', [AdminCategoryController::class, 'store']);
+        Route::put('/categories/{category}', [AdminCategoryController::class, 'update']);
+        Route::delete('/categories/{category}', [AdminCategoryController::class, 'destroy']);
+
+        Route::get('/settings', [AdminSettingController::class, 'index']);
+        Route::put('/settings', [AdminSettingController::class, 'update']);
     });
 });

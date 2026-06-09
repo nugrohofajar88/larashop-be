@@ -2,33 +2,32 @@
 
 namespace App\Support;
 
+use App\Models\Setting;
 use App\Models\ShipmentOrigin;
+use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
 
 /**
- * Layanan ongkir (RajaOngkir) yang dipakai bersama: cari wilayah tujuan +
- * hitung tarif. Sumber kebenaran tunggal untuk web, WA, dan alur order.
+ * Layanan ongkir via Komerce Collaborator (paket enterprise):
+ *   - cari wilayah: GET /tariff/api/v1/destination/search
+ *   - hitung tarif: GET /tariff/api/v1/calculate  (cost + cashback + service_fee)
+ * Sumber kebenaran tunggal untuk web/WA. Kode kurir/layanan di sini SAMA dengan
+ * yang dipakai untuk booking (store order), jadi order pasti bisa di-booking.
  */
 class ShippingService
 {
     public const DEFAULT_WEIGHT = 1000; // gram (1 kg)
 
     /**
-     * Cari wilayah tujuan (RajaOngkir domestic-destination).
-     *
      * @return array<int, array{id:mixed,label:string,province_name:string,city_name:string,district_name:string,subdistrict_name:string,zip_code:string}>
      */
     public function searchDestinations(string $search, int $limit = 5): array
     {
-        $response = Http::acceptJson()
-            ->baseUrl($this->base())
-            ->withHeaders(['key' => (string) config('services.rajaongkir.api_key')])
-            ->get('destination/domestic-destination', [
-                'search' => $search,
-                'limit' => $limit,
-                'offset' => 0,
-            ]);
+        $response = $this->client()->get('/tariff/api/v1/destination/search', [
+            'keyword' => $search,
+            'limit' => $limit,
+        ]);
 
         if (! $response->successful()) {
             return [];
@@ -44,59 +43,86 @@ class ShippingService
                 'subdistrict_name' => $i['subdistrict_name'] ?? '',
                 'zip_code' => $i['zip_code'] ?? '',
             ])
-            ->filter(fn (array $i) => $i['id'] !== null)
+            ->filter(fn (array $i): bool => $i['id'] !== null)
+            ->take($limit)
             ->values()
             ->all();
     }
 
     /**
-     * Hitung opsi ongkir dari gudang aktif ke destination (RajaOngkir domestic-cost).
+     * Hitung opsi ongkir dari gudang aktif ke destination.
+     * Kode `code`/`service_code` = shipping_name/service_name Komerce (siap booking).
      *
-     * @return array<int, array{id:string,code:string,service_code:string,service:string,estimate:string,price:string,price_value:int}>
+     * @return array<int, array{id:string,code:string,service_code:string,service:string,estimate:string,price:string,price_value:int,cashback_value:int,service_fee_value:int}>
      */
-    public function costOptions(int|string $destinationId, int $weightGrams = self::DEFAULT_WEIGHT): array
+    public function costOptions(int|string $destinationId, int $weightGrams = self::DEFAULT_WEIGHT, int $itemValue = 0): array
     {
         $origin = $this->origin();
 
-        if ($origin === null || $origin->origin_id === null || blank($origin->selected_courier)) {
+        if ($origin === null || empty($origin->origin_id)) {
             return [];
         }
 
-        $response = Http::acceptJson()
-            ->baseUrl($this->base())
-            ->withHeaders(['key' => (string) config('services.rajaongkir.api_key')])
-            ->asForm()
-            ->post('calculate/domestic-cost', [
-                'origin' => $origin->origin_id,
-                'destination' => $destinationId,
-                'weight' => max($weightGrams, self::DEFAULT_WEIGHT),
-                'courier' => $origin->selected_courier,
-            ]);
+        $response = $this->client()->get('/tariff/api/v1/calculate', array_filter([
+            'shipper_destination_id' => $origin->origin_id,
+            'receiver_destination_id' => $destinationId,
+            'weight' => round(max($weightGrams, 1) / 1000, 2), // KG (float) — API minta kilogram, bukan gram
+            'item_value' => max($itemValue, 0),
+            'cod' => 'no',
+            'origin_pin_point' => $origin->pin_point ?: null,
+        ], fn ($v): bool => $v !== null));
 
         if (! $response->successful()) {
             return [];
         }
 
-        return collect($response->json('data', []))
-            ->map(function (array $item): array {
-                $serviceCode = trim((string) ($item['service'] ?? ''));
-                $description = trim((string) ($item['description'] ?? ''));
-                $courierName = trim((string) ($item['name'] ?? ''));
-                $priceValue = (int) ($item['cost'] ?? 0);
+        $options = [];
 
-                return [
-                    'id' => Str::slug(((string) ($item['code'] ?? 'courier')).'-'.$serviceCode),
-                    'code' => strtolower((string) ($item['code'] ?? '')),
-                    'service_code' => $serviceCode,
-                    'service' => $description !== '' ? $courierName.' - '.$description : trim($courierName.' '.$serviceCode),
-                    'estimate' => trim((string) ($item['etd'] ?? '')) ?: 'belum tersedia',
+        // Hanya layanan REGULER (standar parsel). Cargo/instant dilewati —
+        // cargo untuk barang besar, instant intra-kota (belum tentu bisa store order).
+        foreach (['calculate_reguler'] as $group) {
+            foreach ((array) $response->json('data.'.$group, []) as $svc) {
+                $priceValue = (int) ($svc['shipping_cost'] ?? 0);
+
+                if ($priceValue <= 0) {
+                    continue;
+                }
+
+                $shippingName = trim((string) ($svc['shipping_name'] ?? ''));
+                $serviceName = trim((string) ($svc['service_name'] ?? ''));
+                $etd = trim((string) ($svc['etd'] ?? ''));
+
+                $options[] = [
+                    'id' => Str::slug($shippingName.'-'.$serviceName),
+                    'code' => $shippingName,
+                    'service_code' => $serviceName,
+                    'service' => trim($shippingName.' - '.$serviceName),
+                    'estimate' => $etd === '-' ? '' : $etd,
                     'price' => 'Rp'.number_format($priceValue, 0, ',', '.'),
                     'price_value' => $priceValue,
+                    'cashback_value' => (int) ($svc['shipping_cashback'] ?? 0),
+                    'service_fee_value' => (int) ($svc['service_fee'] ?? 0),
                 ];
-            })
-            ->filter(fn (array $o) => $o['price_value'] > 0)
-            ->values()
+            }
+        }
+
+        // Hormati allowlist kurir dari admin (shipment_origins.selected_courier).
+        // Mis. "jnt" -> hanya J&T; "jnt:jne:sicepat" -> tiga kurir. Kosong -> semua.
+        $allowed = collect(explode(':', (string) ($origin->selected_courier ?? '')))
+            ->map(fn (string $c): string => strtoupper(trim($c)))
+            ->filter()
             ->all();
+
+        if ($allowed !== []) {
+            $options = array_values(array_filter(
+                $options,
+                fn (array $o): bool => in_array(strtoupper((string) $o['code']), $allowed, true),
+            ));
+        }
+
+        usort($options, fn (array $a, array $b): int => $a['price_value'] <=> $b['price_value']);
+
+        return $options;
     }
 
     public function origin(): ?ShipmentOrigin
@@ -108,8 +134,10 @@ class ShippingService
             ->first();
     }
 
-    protected function base(): string
+    protected function client(): PendingRequest
     {
-        return rtrim((string) config('services.rajaongkir.base_url'), '/').'/';
+        return Http::acceptJson()
+            ->baseUrl(rtrim((string) config('services.komerce_delivery.base_url'), '/'))
+            ->withHeaders(['x-api-key' => (string) config('services.komerce_delivery.api_key')]);
     }
 }

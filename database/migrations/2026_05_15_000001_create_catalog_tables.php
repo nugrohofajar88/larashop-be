@@ -6,9 +6,6 @@ use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
-    /**
-     * Run the migrations.
-     */
     public function up(): void
     {
         Schema::create('categories', function (Blueprint $table) {
@@ -23,7 +20,7 @@ return new class extends Migration
 
         Schema::create('products', function (Blueprint $table) {
             $table->id();
-            $table->foreignId('category_id')->constrained()->cascadeOnUpdate()->restrictOnDelete();
+            $table->foreignId('category_id')->constrained()->cascadeOnUpdate();
             $table->string('sku')->unique();
             $table->string('slug')->unique();
             $table->string('name');
@@ -33,6 +30,9 @@ return new class extends Migration
             $table->unsignedBigInteger('compare_at_price')->nullable();
             $table->string('weight_label')->nullable();
             $table->unsignedInteger('weight_grams')->nullable();
+            $table->decimal('length_cm', 8, 2)->nullable();
+            $table->decimal('width_cm', 8, 2)->nullable();
+            $table->decimal('height_cm', 8, 2)->nullable();
             $table->unsignedInteger('stock')->default(0);
             $table->enum('public_status', ['draft', 'active', 'inactive', 'preorder'])->default('draft');
             $table->enum('catalog_status', ['available', 'limited', 'preorder', 'sold_out'])->default('available');
@@ -41,6 +41,24 @@ return new class extends Migration
             $table->json('highlights')->nullable();
             $table->boolean('is_featured')->default(false);
             $table->timestamp('published_at')->nullable();
+            $table->timestamps();
+        });
+
+        Schema::create('product_variants', function (Blueprint $table) {
+            $table->id();
+            $table->foreignId('product_id')->constrained()->cascadeOnUpdate()->cascadeOnDelete();
+            $table->string('sku')->unique();
+            $table->string('label');
+            $table->unsignedBigInteger('price');
+            $table->unsignedBigInteger('compare_at_price')->nullable();
+            $table->unsignedInteger('stock')->default(0);
+            $table->unsignedInteger('weight_grams')->nullable();
+            $table->decimal('length_cm', 8, 2)->nullable();
+            $table->decimal('width_cm', 8, 2)->nullable();
+            $table->decimal('height_cm', 8, 2)->nullable();
+            $table->boolean('is_default')->default(false);
+            $table->boolean('is_active')->default(true);
+            $table->unsignedInteger('sort_order')->default(1);
             $table->timestamps();
         });
 
@@ -55,12 +73,10 @@ return new class extends Migration
         });
     }
 
-    /**
-     * Reverse the migrations.
-     */
     public function down(): void
     {
         Schema::dropIfExists('product_images');
+        Schema::dropIfExists('product_variants');
         Schema::dropIfExists('products');
         Schema::dropIfExists('categories');
     }

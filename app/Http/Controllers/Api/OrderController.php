@@ -6,9 +6,12 @@ use App\Http\Controllers\Controller;
 use App\Models\CustomerAddress;
 use App\Models\Order;
 use App\Models\OrderItem;
+use App\Models\PaymentAccount;
+use App\Models\Setting;
 use App\Models\ShipmentOrigin;
 use App\Models\UserUniqueCode;
 use App\Support\ApiData;
+use App\Support\ShippingService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
@@ -45,8 +48,18 @@ class OrderController extends Controller
 
         abort_if($order === null, 404);
 
+        $data = ApiData::order($order);
+        $data['payment_accounts'] = PaymentAccount::query()->active()->ordered()->get()
+            ->map(fn (PaymentAccount $account): array => [
+                'bank_name' => $account->bank_name,
+                'account_number' => $account->account_number,
+                'account_holder' => $account->account_holder,
+                'note' => $account->note,
+            ])->all();
+        $data['store_whatsapp'] = Setting::get('store_whatsapp', '');
+
         return response()->json([
-            'data' => ApiData::order($order),
+            'data' => $data,
         ]);
     }
 
@@ -91,7 +104,8 @@ class OrderController extends Controller
             $shipmentOrigin,
             $address,
             $this->resolveWeightGrams($selectedItems),
-            $user->id
+            $user->id,
+            (int) $selectedItems->sum('subtotal')
         );
 
         $selectedShipping = collect($shippingOptions)->firstWhere('id', $validated['shipping_option_id']);
@@ -135,10 +149,13 @@ class OrderController extends Controller
                 'payment_status' => 'Menunggu transfer',
                 'items_total' => $itemsTotal,
                 'shipping_total' => $shippingTotal,
+                'shipping_cashback' => (int) ($selectedShipping['cashback_value'] ?? 0),
                 'unique_code' => $uniqueCode,
                 'used_unique_code' => $usedUniqueCode,
                 'grand_total' => $grandTotal,
                 'shipping_service_name' => $selectedShipping['service'] ?? null,
+                'shipping_courier_code' => $selectedShipping['code'] ?? null,
+                'shipping_service_code' => $selectedShipping['service_code'] ?? null,
                 'shipping_estimate_days' => $selectedShipping['estimate'] ?? null,
                 'shipment_note' => 'Menunggu validasi pembayaran sebelum shipment dibuat.',
                 'recipient_name' => $address->recipient_name,
@@ -160,6 +177,8 @@ class OrderController extends Controller
                     'subtotal' => $item->subtotal,
                 ]);
             }
+
+            $order->logTracking('created', 'app');
 
             if ($usedUniqueCode > 0) {
                 UserUniqueCode::query()->create([
@@ -254,71 +273,16 @@ class OrderController extends Controller
         ]);
     }
 
-    private function resolveShippingOptions(?ShipmentOrigin $origin, ?CustomerAddress $address, int $weight, ?int $userId = null): array
+    private function resolveShippingOptions(?ShipmentOrigin $origin, ?CustomerAddress $address, int $weight, ?int $userId = null, int $itemValue = 0): array
     {
-        if (
-            $origin === null
-            || $address === null
-            || $origin->origin_id === null
-            || $address->destination_id === null
-            || blank($origin->selected_courier)
-        ) {
+        if ($origin === null || $address === null || empty($origin->origin_id) || empty($address->destination_id)) {
             return [];
         }
 
-        $requestPayload = [
-            'origin' => $origin->origin_id,
-            'destination' => $address->destination_id,
-            'weight' => max($weight, 1000),
-            'courier' => $origin->selected_courier,
-        ];
+        $options = app(ShippingService::class)->costOptions($address->destination_id, $weight, $itemValue);
 
-        Log::info('order.checkout.shipping_rates.request', [
-            'user_id' => $userId,
-            'payload' => $requestPayload,
-        ]);
-
-        $response = Http::acceptJson()
-            ->baseUrl(rtrim((string) config('services.rajaongkir.base_url'), '/').'/')
-            ->withHeaders([
-                'key' => (string) config('services.rajaongkir.api_key'),
-            ])
-            ->asForm()
-            ->post('calculate/domestic-cost', $requestPayload);
-
-        Log::info('order.checkout.shipping_rates.response', [
-            'user_id' => $userId,
-            'status' => $response->status(),
-            'successful' => $response->successful(),
-            'body' => $response->json(),
-        ]);
-
-        if (! $response->successful()) {
-            return [];
-        }
-
-        return collect($response->json('data', []))
-            ->map(function (array $item): array {
-                $serviceCode = trim((string) ($item['service'] ?? ''));
-                $description = trim((string) ($item['description'] ?? ''));
-                $courierName = trim((string) ($item['name'] ?? ''));
-                $priceValue = (int) ($item['cost'] ?? 0);
-
-                return [
-                    'id' => Str::slug(((string) ($item['code'] ?? 'courier')).'-'.$serviceCode),
-                    'code' => strtolower((string) ($item['code'] ?? '')),
-                    'service_code' => $serviceCode,
-                    'description' => $description,
-                    'service' => $description !== ''
-                        ? $courierName.' - '.$description
-                        : trim($courierName.' '.$serviceCode),
-                    'estimate' => trim((string) ($item['etd'] ?? '')) ?: 'belum tersedia',
-                    'price' => ApiData::rupiah($priceValue),
-                    'price_value' => $priceValue,
-                    'selected' => false,
-                ];
-            })
-            ->filter(fn (array $option) => $option['price_value'] > 0)
+        return collect($options)
+            ->map(fn (array $option): array => $option + ['description' => '', 'selected' => false])
             ->values()
             ->all();
     }
@@ -388,6 +352,6 @@ class OrderController extends Controller
 
     private function usesUniqueCode(): bool
     {
-        return (bool) config('services.checkout.use_unique_code', true);
+        return \App\Models\Setting::uniqueCodeEnabled();
     }
 }

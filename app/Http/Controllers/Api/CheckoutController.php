@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\CustomerAddress;
 use App\Models\Order;
 use App\Support\ApiData;
+use App\Support\ShippingService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
@@ -55,7 +56,8 @@ class CheckoutController extends Controller
             $shipmentOrigin,
             $selectedAddress,
             $this->resolveWeightGrams($selectedItems),
-            $user->id
+            $user->id,
+            $itemsTotal
         );
         $selectedShipping = collect($shippingOptions)->firstWhere('selected', true) ?? $shippingOptions[0] ?? null;
         $shippingTotal = (int) ($selectedShipping['price_value'] ?? 0);
@@ -95,6 +97,13 @@ class CheckoutController extends Controller
                     ->all(),
                 'shipment_origin' => $shipmentOrigin ? ApiData::shipmentOrigin($shipmentOrigin) : null,
                 'shipping_options' => $shippingOptions,
+                'items' => $selectedItems->map(fn ($item): array => [
+                    'name' => $item->product_name,
+                    'variant_label' => $item->variant_label,
+                    'quantity' => (int) $item->quantity,
+                    'price' => ApiData::rupiah((int) $item->price),
+                    'subtotal' => ApiData::rupiah((int) $item->subtotal),
+                ])->values()->all(),
                 'payment_summary' => [
                     'unique_code_enabled' => $this->usesUniqueCode(),
                     'items_total' => ApiData::rupiah($itemsTotal),
@@ -132,7 +141,7 @@ class CheckoutController extends Controller
         return \App\Support\ShippingWeight::chargeableGrams($lines);
     }
 
-    private function resolveShippingOptions(?\App\Models\ShipmentOrigin $origin, ?CustomerAddress $address, int $weight, ?int $userId = null): array
+    private function resolveShippingOptions(?\App\Models\ShipmentOrigin $origin, ?CustomerAddress $address, int $weight, ?int $userId = null, int $itemValue = 0): array
     {
         if (
             $origin === null
@@ -154,76 +163,15 @@ class CheckoutController extends Controller
             return [];
         }
 
-        $requestPayload = [
-            'origin' => $origin->origin_id,
-            'destination' => $address->destination_id,
-            'weight' => max($weight, 1000),
-            'courier' => $origin->selected_courier,
-        ];
+        $options = app(ShippingService::class)->costOptions($address->destination_id, $weight, $itemValue);
 
-        Log::info('checkout.shipping_rates.request', [
-            'user_id' => $userId,
-            'payload' => $requestPayload,
-        ]);
-
-        $response = Http::acceptJson()
-            ->baseUrl(rtrim((string) config('services.rajaongkir.base_url'), '/').'/')
-            ->withHeaders([
-                'key' => (string) config('services.rajaongkir.api_key'),
-            ])
-            ->asForm()
-            ->post('calculate/domestic-cost', $requestPayload);
-
-        Log::info('checkout.shipping_rates.response', [
-            'user_id' => $userId,
-            'status' => $response->status(),
-            'successful' => $response->successful(),
-            'body' => $response->json(),
-        ]);
-
-        if (! $response->successful()) {
+        if ($options === []) {
             return [];
         }
 
-        $options = collect($response->json('data', []))
-            ->map(function (array $item): array {
-                $serviceCode = trim((string) ($item['service'] ?? ''));
-                $description = trim((string) ($item['description'] ?? ''));
-                $courierName = trim((string) ($item['name'] ?? ''));
-                $priceValue = (int) ($item['cost'] ?? 0);
-
-                return [
-                    'id' => Str::slug(((string) ($item['code'] ?? 'courier')).'-'.$serviceCode),
-                    'code' => strtolower((string) ($item['code'] ?? '')),
-                    'service_code' => $serviceCode,
-                    'description' => $description,
-                    'service' => $description !== ''
-                        ? $courierName.' - '.$description
-                        : trim($courierName.' '.$serviceCode),
-                    'estimate' => trim((string) ($item['etd'] ?? '')) ?: 'belum tersedia',
-                    'price' => ApiData::rupiah($priceValue),
-                    'price_value' => $priceValue,
-                    'selected' => false,
-                ];
-            })
-            ->filter(fn (array $option) => $option['price_value'] > 0)
-            ->values();
-
-        if ($options->isEmpty()) {
-            Log::warning('checkout.shipping_rates.empty_options', [
-                'user_id' => $userId,
-                'payload' => $requestPayload,
-                'body' => $response->json(),
-            ]);
-
-            return [];
-        }
-
-        $selectedIndex = $options->search(fn (array $option): bool => $this->isRegularService($option));
-        $selectedIndex = $selectedIndex === false ? 0 : $selectedIndex;
-
-        return $options
-            ->map(fn (array $option, int $index) => $option + ['selected' => $index === $selectedIndex])
+        // FE checkout butuh field 'description' & 'selected'; tandai termurah (index 0) sbg default.
+        return collect($options)
+            ->map(fn (array $option, int $index): array => $option + ['description' => '', 'selected' => $index === 0])
             ->values()
             ->all();
     }
@@ -271,6 +219,6 @@ class CheckoutController extends Controller
 
     private function usesUniqueCode(): bool
     {
-        return (bool) config('services.checkout.use_unique_code', true);
+        return \App\Models\Setting::uniqueCodeEnabled();
     }
 }

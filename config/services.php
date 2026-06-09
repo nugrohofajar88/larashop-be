@@ -46,8 +46,12 @@ return [
         'available_couriers' => array_values(array_filter(array_map('trim', explode(',', (string) env('AVAILABLE_COURIER', 'jne,jnt,sicepat,ide,sap,ninja,tiki,lion,anteraja'))))),
     ],
 
-    'checkout' => [
-        'use_unique_code' => filter_var(env('CHECKOUT_USE_UNIQUE_CODE', true), FILTER_VALIDATE_BOOL),
+    // Komerce Collaborator (paket enterprise) — store order / booking ekspedisi.
+    'komerce_delivery' => [
+        'base_url' => env('KOMERCE_DELIVERY_BASE_URL', 'https://api-sandbox.collaborator.komerce.id'),
+        'api_key' => env('KOMERCE_DELIVERY_API_KEY'),
+        'enabled' => env('KOMERCE_DELIVERY_ENABLED', false),
+        'webhook_secret' => env('KOMERCE_WEBHOOK_SECRET'),
     ],
 
     'shipping' => [

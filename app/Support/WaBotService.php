@@ -7,11 +7,10 @@ use App\Models\WaMessage;
 use Illuminate\Support\Str;
 
 /**
- * Processor pesan WhatsApp masuk (bot tes).
+ * Processor pesan WhatsApp masuk.
  *
- * Perintah:
- *   /cek-produk   -> daftar produk: {id}-{nama}-{varian}-{qty}
- *   cek-{id}      -> detail produk (mis. cek-1)
+ * Perintah: /pesan (order), /katalog (daftar produk), /cari <nama-produk>,
+ *   /cek-{id} (detail produk), /cek-ongkir <wilayah>, /tanya-admin (ke admin).
  */
 class WaBotService
 {
@@ -80,12 +79,11 @@ class WaBotService
     {
         $text = strtolower(trim($message));
 
-        return $text === '/cek-produk'
-            || $text === 'cek-produk'
-            || preg_match('/^cek-\d+$/', $text) === 1
+        return in_array($text, ['/katalog', 'katalog'], true)
+            || preg_match('/^\/?cek-\d+$/', $text) === 1
             || preg_match('/^\/?cari[\s\-]+/', $text) === 1
-            || preg_match('/^\/?tanya[\s\-]+/', $text) === 1
-            || preg_match('/^\/?ongkir[\s\-]+/', $text) === 1;
+            || preg_match('/^\/?tanya-admin\b/', $text) === 1
+            || preg_match('/^\/?cek-ongkir[\s\-]+/', $text) === 1;
     }
 
     /**
@@ -95,31 +93,32 @@ class WaBotService
     {
         $text = strtolower(trim($message));
 
-        if ($text === '/cek-produk' || $text === 'cek-produk') {
+        // Daftar produk: /katalog.
+        if (in_array($text, ['/katalog', 'katalog'], true)) {
             return $this->listProducts();
         }
 
-        if (preg_match('/^cek-(\d+)$/', $text, $matches)) {
+        if (preg_match('/^\/?cek-(\d+)$/', $text, $matches)) {
             return $this->productDetail((int) $matches[1]);
         }
 
-        // Pencarian: "/cari pupuk kandang" atau "/cari-pupuk kandang".
+        // Pencarian: "/cari nama-produk".
         if (preg_match('/^\/?cari[\s\-]+(.+)$/i', trim($message), $matches)) {
             return $this->searchProducts(trim($matches[1]));
         }
 
-        // Tanya AI: "/tanya pupuk apa yang bagus untuk cabai?"
-        if (preg_match('/^\/?tanya[\s\-]+(.+)$/i', trim($message), $matches)) {
-            return $this->answerQuestion(trim($matches[1]), $phone);
+        // Tanya admin: "/tanya-admin ..." -> diarahkan ke admin (bukan AI).
+        if (preg_match('/^\/?tanya-admin\b/i', trim($message))) {
+            return $this->askAdmin();
         }
 
-        // Cek ongkir: "/ongkir singosari" (estimasi berat 1 kg).
-        if (preg_match('/^\/?ongkir[\s\-]+(.+)$/i', trim($message), $matches)) {
+        // Cek ongkir: "/cek-ongkir <wilayah>".
+        if (preg_match('/^\/?cek-ongkir[\s\-]+(.+)$/i', trim($message), $matches)) {
             return $this->shippingEstimate(trim($matches[1]));
         }
 
         // Sapaan / minta bantuan -> tampilkan menu. Cocok juga untuk link wa.me
-        // berisi teks "halo SobatTani!" (match jika DIAWALI salah satu kata ini).
+        // berisi teks "halo Sobat Akar Tani Kimia!" (match jika DIAWALI salah satu kata ini).
         if (preg_match('/^\s*\/?(halo|hai|hi|help|menu|bantuan|mulai|assalamualaikum|selamat)\b/i', $text)) {
             return $this->help();
         }
@@ -137,20 +136,31 @@ class WaBotService
             ->limit(30)
             ->get();
 
-        if ($products->isEmpty()) {
-            return "Belum ada produk di katalog.";
+        $blocks = [];
+
+        foreach ($products as $p) {
+            // Hanya varian aktif & ada stok.
+            $inStock = $p->variants->filter(
+                fn ($v): bool => $v->is_active && (int) $v->stock > 0
+            )->values();
+
+            if ($inStock->isEmpty()) {
+                continue; // lewati produk yang semua variannya habis
+            }
+
+            $variantLines = $inStock->map(
+                fn ($v): string => "   • {$v->label} — ".$this->money((int) $v->price)
+            )->implode("\n");
+
+            $blocks[] = "{$p->id}. *{$p->name}*\n{$variantLines}";
         }
 
-        $lines = $products->map(function (Product $p): string {
-            $variant = $p->variants->firstWhere('is_default', true) ?? $p->variants->first();
-            $variantLabel = $variant->label ?? '-';
+        if ($blocks === []) {
+            return "Belum ada produk yang tersedia saat ini.";
+        }
 
-            return "{$p->id}-{$p->name}-{$variantLabel}-{$p->stock}";
-        })->implode("\n");
-
-        $firstId = $products->first()->id;
-
-        return "📦 *Daftar Produk SobatTani*\n(format: id-nama-varian-stok)\n\n{$lines}\n\nLihat detail ketik: *cek-{id}* (contoh: cek-{$firstId})";
+        return "📦 *Daftar Produk Sobat Akar Tani Kimia*\n\n".implode("\n\n", $blocks)
+            ."\n\nLihat detail ketik */cek-{id}*, atau */pesan* untuk memesan.";
     }
 
     protected function searchProducts(string $query): string
@@ -170,7 +180,7 @@ class WaBotService
 
         if ($products->isEmpty()) {
             return "🔍 Tidak ada produk yang cocok dengan \"{$query}\".\n"
-                ."Coba kata kunci lain, atau ketik */cek-produk* untuk lihat semua.";
+                ."Coba kata kunci lain, atau ketik */katalog* untuk lihat semua.";
         }
 
         $lines = $products->map(
@@ -238,7 +248,7 @@ class WaBotService
                 return "- {$p->name} (kategori {$category}): {$desc}{$variantText}";
             })->implode("\n");
 
-        $prompt = "Kamu asisten WhatsApp toko pertanian \"SobatTani\". "
+        $prompt = "Kamu asisten WhatsApp toko pertanian \"Sobat Akar Tani Kimia\". "
             ."Jawab ramah & singkat (maksimal 4 kalimat) dalam Bahasa Indonesia, "
             ."HANYA berdasarkan katalog di bawah + pengetahuan pertanian umum. "
             ."Jika produk yang ditanya tidak ada di katalog, katakan belum tersedia. "
@@ -265,6 +275,16 @@ class WaBotService
     }
 
     /**
+     * Tanya admin — pertanyaan pelanggan diarahkan ke admin (bukan AI).
+     */
+    protected function askAdmin(): string
+    {
+        return "💬 *Tanya Admin*\n\n"
+            ."Silakan tulis pertanyaanmu langsung di chat ini ya — admin kami akan membalas secepatnya. 🙏\n\n"
+            ."Mau memesan? Ketik */pesan*. Lihat produk? Ketik */katalog*.";
+    }
+
+    /**
      * Cek estimasi ongkir mandiri (tanpa /pesan). Ambil wilayah pertama yang cocok,
      * hitung untuk berat default 1 kg.
      */
@@ -285,7 +305,8 @@ class WaBotService
         }
 
         $lines = collect($options)->map(
-            fn (array $o): string => "• {$o['service']} — {$o['price']} (estimasi {$o['estimate']})"
+            fn (array $o): string => "• {$o['service']} — {$o['price']}".
+                (($o['estimate'] ?? '') !== '' ? " (estimasi {$o['estimate']})" : '')
         )->implode("\n");
 
         return "🚚 *Estimasi ongkir* ke:\n{$dest['label']}\n_(perkiraan berat 1 kg)_\n\n{$lines}\n\n"
@@ -297,7 +318,7 @@ class WaBotService
         $product = Product::query()->with(['variants', 'category'])->find($id);
 
         if ($product === null) {
-            return "❌ Produk dengan ID {$id} tidak ditemukan.\nKetik */cek-produk* untuk lihat daftar.";
+            return "❌ Produk dengan ID {$id} tidak ditemukan.\nKetik */katalog* untuk lihat daftar produk.";
         }
 
         $price = 'Rp'.number_format((int) $product->price, 0, ',', '.');
@@ -329,13 +350,12 @@ class WaBotService
 
     protected function help(): string
     {
-        return "Halo! 👋 Ini bot *SobatTani* (mode tes).\n\n"
+        return "Halo! 👋 Selamat datang di *Sobat Akar Tani Kimia*.\n\n"
             ."Perintah yang tersedia:\n"
-            ."• */pesan* — buat pesanan (pilih produk → ongkir → alamat)\n"
-            ."• */cek-produk* — lihat daftar produk\n"
-            ."• */cari kata* — cari produk (contoh: /cari pupuk kandang)\n"
-            ."• */tanya ...* — tanya asisten (contoh: /tanya pupuk untuk cabai apa?)\n"
-            ."• */ongkir wilayah* — cek estimasi ongkir (contoh: /ongkir singosari)\n"
-            ."• *cek-{id}* — lihat detail produk (contoh: cek-1)";
+            ."• */pesan* — buat pesanan (isi form pesanan)\n"
+            ."• */katalog* — lihat daftar produk\n"
+            ."• */cari nama-produk* — cari produk (contoh: /cari pupuk)\n"
+            ."• */cek-ongkir wilayah* — cek estimasi ongkir (contoh: /cek-ongkir nganjuk)\n"
+            ."• */tanya-admin* — tanya langsung ke admin";
     }
 }

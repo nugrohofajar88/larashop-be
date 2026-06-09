@@ -6,9 +6,6 @@ use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
-    /**
-     * Run the migrations.
-     */
     public function up(): void
     {
         Schema::create('customer_addresses', function (Blueprint $table) {
@@ -17,6 +14,7 @@ return new class extends Migration
             $table->string('label');
             $table->string('recipient_name');
             $table->string('recipient_phone');
+            $table->unsignedBigInteger('destination_id')->nullable();
             $table->string('province');
             $table->string('city');
             $table->string('district');
@@ -31,9 +29,6 @@ return new class extends Migration
         });
     }
 
-    /**
-     * Reverse the migrations.
-     */
     public function down(): void
     {
         Schema::dropIfExists('customer_addresses');

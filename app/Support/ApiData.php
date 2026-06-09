@@ -141,6 +141,7 @@ class ApiData
             'subdistrict' => $origin->subdistrict,
             'postal_code' => $origin->postal_code,
             'address_line' => $origin->address_line,
+            'pin_point' => $origin->pin_point,
             'note' => $origin->note,
             'is_default' => $origin->is_default,
             'is_active' => $origin->is_active,
@@ -409,7 +410,35 @@ class ApiData
                 'awb' => $order->awb,
                 'note' => $order->shipment_note,
             ],
+            // Riwayat status (timeline). Hanya kalau relasi sengaja di-load (detail),
+            // supaya halaman daftar tidak N+1.
+            'trackings' => $order->relationLoaded('trackings')
+                ? $order->trackings->map(fn (\App\Models\OrderTracking $t): array => [
+                    'status' => $t->status,
+                    'label' => self::trackingLabel($t->status),
+                    'source' => $t->source,
+                    'raw_status' => $t->raw_status,
+                    'awb' => $t->awb,
+                    'note' => $t->note,
+                    'time' => $t->created_at?->translatedFormat('d M Y, H:i') ?? $t->created_at?->format('d M Y, H:i'),
+                ])->values()->all()
+                : [],
         ];
+    }
+
+    public static function trackingLabel(string $status): string
+    {
+        return match ($status) {
+            'created' => 'Pesanan dibuat',
+            'paid' => 'Pembayaran dikonfirmasi',
+            'pickup_scheduled' => 'Pickup dijadwalkan',
+            'submitted' => 'Diajukan ke kurir',
+            'picked_up' => 'Dijemput kurir',
+            'in_transit' => 'Dalam pengiriman',
+            'delivered' => 'Sampai tujuan',
+            'cancelled' => 'Dibatalkan',
+            default => ucfirst(str_replace('_', ' ', $status)),
+        };
     }
 
     public static function shipment(Order $order): array

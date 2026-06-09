@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Order;
 use App\Models\ShipmentOrigin;
 use App\Support\ApiData;
+use App\Support\ShippingService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
@@ -33,35 +34,7 @@ class AdminShipmentController extends Controller
             'offset' => ['nullable', 'integer', 'min:0'],
         ]);
 
-        $response = Http::acceptJson()
-            ->baseUrl(rtrim((string) config('services.rajaongkir.base_url'), '/').'/')
-            ->withHeaders([
-                'key' => (string) config('services.rajaongkir.api_key'),
-            ])
-            ->get('destination/domestic-destination', [
-                'search' => $validated['search'],
-                'limit' => $validated['limit'] ?? 5,
-                'offset' => $validated['offset'] ?? 0,
-            ]);
-
-        if (! $response->successful()) {
-            return response()->json([
-                'message' => 'Gagal mengambil data destinasi.',
-            ], 502);
-        }
-
-        $items = collect($response->json('data', []))
-            ->map(fn (array $item) => [
-                'id' => $item['id'] ?? null,
-                'label' => $item['label'] ?? '',
-                'province_name' => $item['province_name'] ?? '',
-                'city_name' => $item['city_name'] ?? '',
-                'district_name' => $item['district_name'] ?? '',
-                'subdistrict_name' => $item['subdistrict_name'] ?? '',
-                'zip_code' => $item['zip_code'] ?? '',
-            ])
-            ->values()
-            ->all();
+        $items = app(ShippingService::class)->searchDestinations($validated['search'], $validated['limit'] ?? 5);
 
         return response()->json([
             'data' => $items,
@@ -100,6 +73,7 @@ class AdminShipmentController extends Controller
             'subdistrict' => ['required', 'string', 'max:100'],
             'postal_code' => ['required', 'string', 'max:10'],
             'address_line' => ['required', 'string'],
+            'pin_point' => ['nullable', 'string', 'max:60'],
             'note' => ['nullable', 'string', 'max:255'],
         ]);
 

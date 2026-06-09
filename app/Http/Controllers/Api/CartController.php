@@ -264,7 +264,7 @@ class CartController extends Controller
 
     private function usesUniqueCode(): bool
     {
-        return (bool) config('services.checkout.use_unique_code', true);
+        return \App\Models\Setting::uniqueCodeEnabled();
     }
 
     private function generateUniqueCode(): int

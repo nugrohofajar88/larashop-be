@@ -61,7 +61,19 @@ class User extends Authenticatable
 
     public function uniqueCodeBalance(): int
     {
-        $incoming = (int) $this->uniqueCodeLedger()->where('type', 'paid')->sum('value');
+        // Hanya kode unik dari order yang pembayarannya SUDAH tervalidasi
+        // (orders.paid_at terisi) yang dihitung sebagai saldo yang bisa dipakai.
+        // Order yang masih pending_payment tidak menambah saldo.
+        $incoming = (int) $this->uniqueCodeLedger()
+            ->where('type', 'paid')
+            ->whereExists(function ($query): void {
+                $query->selectRaw('1')
+                    ->from('orders')
+                    ->whereColumn('orders.id', 'user_unique_codes.ref_id')
+                    ->whereNotNull('orders.paid_at');
+            })
+            ->sum('value');
+
         $outgoing = (int) $this->uniqueCodeLedger()->where('type', 'used')->sum('value');
 
         return max(0, $incoming - $outgoing);
