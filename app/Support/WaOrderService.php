@@ -38,7 +38,16 @@ class WaOrderService
 
     public function isTrigger(string $text): bool
     {
-        return in_array(strtolower(trim($text)), ['/pesan', 'pesan', 'order', '/order'], true);
+        $t = strtolower(trim($this->cleanInvisible($text)));
+
+        if (in_array($t, ['/pesan', 'pesan', 'order', '/order', 'pesen'], true)) {
+            return true;
+        }
+
+        // Niat memesan dalam bahasa natural: "(saya) mau pesan", "pengen order",
+        // "mau beli", "ingin belanja", atau diawali "pesan/order" ("pesan dong").
+        return preg_match('/\b(mau|ingin|pengen|pgn|pingin|hendak|nak|pesan|pesen)\s+(pesan|pesen|order|beli|belanja|barang|produk)\b/iu', $t) === 1
+            || preg_match('/^(pesan|pesen|order)\b/iu', $t) === 1;
     }
 
     public function continueHint(string $phone): ?string

@@ -119,7 +119,7 @@ class WaBotService
 
         // Sapaan / minta bantuan -> tampilkan menu. Cocok juga untuk link wa.me
         // berisi teks "halo Sobat Akar Tani Kimia!" (match jika DIAWALI salah satu kata ini).
-        if (preg_match('/^\s*\/?(halo|hai|hi|help|menu|bantuan|mulai|assalamualaikum|selamat)\b/i', $text)) {
+        if (preg_match('/^\s*\/?(halo|hai|hi|help|menu|bantuan|mulai|assalamualaikum|selamat|pagi|siang|sore|malam|met|p)\b/i', $text)) {
             return $this->help();
         }
 
