@@ -37,56 +37,13 @@ class AdminOrderController extends Controller
 
     public function validatePayment(Order $order): JsonResponse
     {
-        DB::transaction(function () use ($order): void {
-            $order->update([
-                'status' => 'paid',
-                'payment_status' => 'Tervalidasi',
-                'paid_at' => now(),
-                'shipment_note' => 'Pembayaran tervalidasi. Order siap diproses ke shipment.',
-            ]);
-
-            if ($this->usesUniqueCode() && (int) $order->unique_code > 0) {
-                UserUniqueCode::query()->firstOrCreate(
-                    [
-                        'user_id' => $order->user_id,
-                        'ref_id' => $order->id,
-                        'type' => 'paid',
-                    ],
-                    [
-                        'value' => (int) $order->unique_code,
-                    ]
-                );
-            }
-        });
-
-        // Auto-booking ekspedisi via Komerce (store order) — kalau diaktifkan.
-        // Dilakukan SETELAH validasi commit, jadi validasi tetap sukses walau booking gagal.
-        $bookingMessage = null;
-        $komerce = app(KomerceShipmentService::class);
-
-        if ($komerce->enabled()) {
-            $result = $komerce->createOrder($order);
-
-            if ($result['ok']) {
-                $order->update([
-                    'komerce_order_no' => $result['order_no'] ?? null,
-                    'komerce_order_id' => $result['order_id'] ?? null,
-                    'shipment_note' => 'Pembayaran tervalidasi. Order ekspedisi dibuat: '.($result['order_no'] ?? '-').'.',
-                ]);
-            } else {
-                $bookingMessage = 'Pembayaran tervalidasi, tapi booking ekspedisi GAGAL: '
-                    .($result['message'] ?? 'tidak diketahui').'. Bisa dicoba ulang.';
-                $order->update(['shipment_note' => $bookingMessage]);
-            }
-        }
-
-        $order->logTracking('paid', 'admin');
+        $result = app(\App\Support\OrderPaymentService::class)->markPaid($order, 'admin');
 
         $order->refresh()->load(['items', 'user']);
 
         return response()->json([
             'data' => ApiData::order($order),
-            'message' => $bookingMessage ?? 'Pembayaran berhasil divalidasi.',
+            'message' => $result['message'],
         ]);
     }
 
@@ -209,10 +166,6 @@ class AdminOrderController extends Controller
             'data' => ApiData::order($order),
             'message' => 'Order berhasil ditandai selesai.',
         ]);
-    }
-    private function usesUniqueCode(): bool
-    {
-        return \App\Models\Setting::uniqueCodeEnabled();
     }
 }
 

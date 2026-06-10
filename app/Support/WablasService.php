@@ -8,13 +8,26 @@ use Illuminate\Support\Facades\Log;
 class WablasService
 {
     /**
-     * Kirim pesan WhatsApp via Wablas.
-     *
-     * @param  string  $phone    Nomor tujuan (mis. 628123456789)
-     * @param  string  $message  Isi pesan
-     * @return bool  true kalau Wablas membalas sukses
+     * Kirim pesan teks WhatsApp via Wablas.
      */
     public function sendMessage(string $phone, string $message): bool
+    {
+        return $this->send('/api/send-message', ['phone' => $phone, 'message' => $message], $phone);
+    }
+
+    /**
+     * Kirim gambar (dari URL) via Wablas. Dipakai mis. meneruskan bukti transfer.
+     */
+    public function sendImage(string $phone, string $imageUrl, string $caption = ''): bool
+    {
+        return $this->send('/api/send-image', [
+            'phone' => $phone,
+            'image' => $imageUrl,
+            'caption' => $caption,
+        ], $phone);
+    }
+
+    protected function send(string $endpoint, array $payload, string $phone): bool
     {
         $base = rtrim((string) config('services.wablas.base_url'), '/');
         $token = (string) config('services.wablas.token');
@@ -33,13 +46,11 @@ class WablasService
             $response = Http::withHeaders(['Authorization' => $authorization])
                 ->asForm()
                 ->timeout(15)
-                ->post($base.'/api/send-message', [
-                    'phone' => $phone,
-                    'message' => $message,
-                ]);
+                ->post($base.$endpoint, $payload);
         } catch (\Throwable $e) {
             Log::channel('wablas')->error('wablas.send.exception', [
                 'phone' => $phone,
+                'endpoint' => $endpoint,
                 'message' => $e->getMessage(),
             ]);
 
@@ -50,6 +61,7 @@ class WablasService
 
         Log::channel('wablas')->info('wablas.send', [
             'phone' => $phone,
+            'endpoint' => $endpoint,
             'http' => $response->status(),
             'ok' => $ok,
             'response' => $response->json() ?? $response->body(),

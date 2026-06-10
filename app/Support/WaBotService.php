@@ -2,7 +2,9 @@
 
 namespace App\Support;
 
+use App\Models\Order;
 use App\Models\Product;
+use App\Models\User;
 use App\Models\WaMessage;
 use Illuminate\Support\Str;
 
@@ -24,6 +26,11 @@ class WaBotService
      */
     public function handle(string $phone, string $message): void
     {
+        // Admin memvalidasi pembayaran via WA: balas "ORD-055 PAID".
+        if ($this->tryAdminPaymentValidation($phone, $message)) {
+            return;
+        }
+
         $order = app(WaOrderService::class);
 
         if ($this->isInfoCommand($message)) {
@@ -117,6 +124,14 @@ class WaBotService
             return $this->shippingEstimate(trim($matches[1]));
         }
 
+        // Konfirmasi pembayaran: "sudah bayar", "udah transfer", "sdh tf", "bukti transfer", "lunas".
+        if ($phone !== null
+            && (preg_match('/\b(sudah|udah|sdh|telah|barusan|baru\s*saja)\s*(bayar|transfer|tf|trf|lunas|membayar|mentransfer|byr)\b/i', $text) === 1
+                || preg_match('/\bbukti\s*(transfer|tf|bayar|pembayaran|byr)\b/i', $text) === 1
+                || preg_match('/^\s*(lunas|paid|sudah\s*ditransfer)\b/i', $text) === 1)) {
+            return $this->paymentConfirmation($phone);
+        }
+
         // Sapaan / minta bantuan -> tampilkan menu. Cocok juga untuk link wa.me
         // berisi teks "halo Sobat Akar Tani Kimia!" (match jika DIAWALI salah satu kata ini).
         if (preg_match('/^\s*\/?(halo|hai|hi|help|menu|bantuan|mulai|assalamualaikum|selamat|pagi|siang|sore|malam|met|p)\b/i', $text)) {
@@ -126,6 +141,196 @@ class WaBotService
         // Pesan lain di luar format: DIDIAMKAN (bot tidak membalas),
         // supaya tidak mengganggu obrolan biasa / chat dengan admin.
         return null;
+    }
+
+    /**
+     * Tangani pesan bergambar. Kalau pelanggan punya pesanan menunggu bayar,
+     * anggap itu bukti transfer -> teruskan ke admin + balas pelanggan.
+     */
+    public function handleImage(string $phone, string $imageUrl, string $caption = ''): void
+    {
+        $this->record($phone, 'in', '[gambar] '.($caption !== '' ? $caption : 'tanpa caption'));
+
+        $order = $this->pendingOrder($phone);
+
+        if ($order === null) {
+            // Tak ada pesanan pending -> kalau ada caption, proses sebagai teks biasa.
+            if (trim($caption) !== '') {
+                $reply = $this->buildReply($caption, $phone);
+
+                if ($reply !== null && $reply !== '') {
+                    $this->wablas->sendMessage($phone, $reply);
+                    $this->record($phone, 'out', $reply);
+                }
+            }
+
+            return;
+        }
+
+        $this->notifyAdminPayment($order, $phone, $imageUrl);
+
+        $reply = "🙏 Bukti transfer untuk pesanan *{$order->code}* sudah kami terima. "
+            ."Admin akan segera *memverifikasi* lalu pesananmu diproses. Terima kasih! 😊";
+        $this->wablas->sendMessage($phone, $reply);
+        $this->record($phone, 'out', $reply);
+    }
+
+    protected function pendingOrder(string $phone): ?Order
+    {
+        return Order::query()
+            ->with('user')
+            ->whereHas('user', fn ($q) => $q->where('phone', $phone))
+            ->where('status', 'pending_payment')
+            ->latest('id')
+            ->first();
+    }
+
+    /**
+     * Beri tahu admin bahwa pelanggan konfirmasi/kirim bukti bayar.
+     * Nomor admin diambil dari tabel users (role=admin) — sumber kebenaran.
+     */
+    protected function notifyAdminPayment(Order $order, string $phone, ?string $imageUrl): void
+    {
+        $customer = $this->normalizePhone($phone);
+
+        $admins = User::query()
+            ->where('role', 'admin')
+            ->whereNotNull('phone')
+            ->pluck('phone')
+            ->map(fn ($p): string => $this->normalizePhone((string) $p))
+            ->filter()
+            ->reject(fn (string $p): bool => $p === $customer) // jangan kirim ke pelanggan itu sendiri
+            ->unique()
+            ->values();
+
+        if ($admins->isEmpty()) {
+            return;
+        }
+
+        $name = $order->user?->name ?? $phone;
+        $caption = "💸 *Konfirmasi pembayaran*\n"
+            ."Pelanggan: {$name} (wa.me/{$customer})\n"
+            ."Pesanan: *{$order->code}* — ".$this->money((int) $order->grand_total)."\n\n"
+            .(($imageUrl !== null && $imageUrl !== '') ? "Bukti transfer terlampir.\n\n" : '')
+            ."Cek rekening, lalu *validasi*:\n"
+            ."• lewat panel admin, atau\n"
+            ."• balas pesan ini: *{$order->code} PAID*";
+
+        foreach ($admins as $adminPhone) {
+            if ($imageUrl !== null && $imageUrl !== '') {
+                $this->wablas->sendImage($adminPhone, $imageUrl, $caption);
+            } else {
+                $this->wablas->sendMessage($adminPhone, $caption);
+            }
+        }
+    }
+
+    /**
+     * Normalisasi nomor ke format internasional tanpa "+": 08xx -> 628xx.
+     */
+    protected function normalizePhone(string $raw): string
+    {
+        $digits = preg_replace('/\D/', '', $raw) ?? '';
+
+        if ($digits !== '' && str_starts_with($digits, '0')) {
+            $digits = '62'.substr($digits, 1);
+        }
+
+        return $digits;
+    }
+
+    /**
+     * Validasi pembayaran via WA (khusus admin): balas "ORD-055 PAID".
+     * Return true kalau pesan ini perintah validasi (sudah ditangani).
+     */
+    protected function tryAdminPaymentValidation(string $phone, string $message): bool
+    {
+        if (preg_match('/(ord-\d+)[^a-z0-9]*(paid|valid|lunas|acc|sah)\b/i', trim($message), $m) !== 1) {
+            return false;
+        }
+
+        // Hanya admin (cocokkan nomor pengirim ke user role=admin).
+        if ($this->adminByPhone($phone) === null) {
+            $this->wablas->sendMessage($phone, "Validasi pembayaran hanya untuk admin. Kalau kamu sudah transfer, ketik *sudah bayar* atau kirim *bukti transfer* ya 🙏");
+
+            return true;
+        }
+
+        $raw = strtoupper($m[1]);
+        $num = (int) substr($raw, 4);
+        $codes = array_values(array_unique([$raw, 'ORD-'.$num, 'ORD-'.str_pad((string) $num, 3, '0', STR_PAD_LEFT)]));
+        $order = Order::query()->with('user')->whereIn('code', $codes)->first();
+
+        if ($order === null) {
+            $this->wablas->sendMessage($phone, "❌ Pesanan *{$raw}* tidak ditemukan.");
+
+            return true;
+        }
+
+        if ($order->status !== 'pending_payment') {
+            $this->wablas->sendMessage($phone, "ℹ️ Pesanan *{$order->code}* statusnya sudah *{$order->status}*, tak perlu divalidasi lagi.");
+
+            return true;
+        }
+
+        $result = app(OrderPaymentService::class)->markPaid($order, 'admin');
+
+        $this->wablas->sendMessage(
+            $phone,
+            "✅ Pembayaran *{$order->code}* berhasil divalidasi.\n".$result['message']
+            .(($result['order_no'] ?? null) ? "\nResi: ".$result['order_no'] : '')
+        );
+
+        $this->notifyCustomerPaid($order);
+
+        return true;
+    }
+
+    /** Cari user admin berdasarkan nomor (cocokkan format 62/08). */
+    protected function adminByPhone(string $phone): ?User
+    {
+        $norm = $this->normalizePhone($phone);
+        $local = str_starts_with($norm, '62') ? '0'.substr($norm, 2) : $norm;
+        $candidates = array_values(array_unique([$phone, $norm, $local]));
+
+        return User::query()->where('role', 'admin')->whereIn('phone', $candidates)->first();
+    }
+
+    /** Beri tahu pelanggan bahwa pembayarannya sudah dikonfirmasi. */
+    protected function notifyCustomerPaid(Order $order): void
+    {
+        $cust = $this->normalizePhone((string) ($order->user?->phone ?? $order->recipient_phone ?? ''));
+
+        if ($cust === '') {
+            return;
+        }
+
+        $this->wablas->sendMessage(
+            $cust,
+            "🎉 Pembayaran untuk pesanan *{$order->code}* sudah *dikonfirmasi*!\n\n"
+            ."Pesananmu segera kami proses & kirim. Terima kasih sudah belanja di *Akar Tani Kimia* 🌱"
+        );
+    }
+
+    /**
+     * Balas konfirmasi pembayaran (teks) dari pelanggan + rujuk pesanan pending
+     * + beri tahu admin.
+     */
+    protected function paymentConfirmation(string $phone): string
+    {
+        $order = $this->pendingOrder($phone);
+
+        if ($order === null) {
+            return "🙏 Terima kasih infonya! Tapi kami belum menemukan pesanan yang menunggu pembayaran atas nomor ini.\n\n"
+                ."Kalau kamu baru transfer untuk pesanan tertentu, balas dengan *kode pesanannya* (mis. ORD-001). "
+                ."Atau ketik */pesan* untuk memesan.";
+        }
+
+        $this->notifyAdminPayment($order, $phone, null);
+
+        return "🙏 Terima kasih! Info pembayaran untuk pesanan *{$order->code}* (total ".$this->money((int) $order->grand_total).") sudah kami terima.\n\n"
+            ."Admin akan segera *memverifikasi* ke rekening, lalu pesananmu diproses. Mohon tunggu konfirmasinya ya 😊\n\n"
+            ."Kalau ada *bukti transfer*, kirim saja gambarnya di sini.";
     }
 
     protected function listProducts(): string

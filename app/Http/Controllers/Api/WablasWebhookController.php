@@ -99,15 +99,33 @@ class WablasWebhookController extends Controller
 
         $phone = $payload['phone'] ?? $payload['sender'] ?? null;
         $message = trim((string) ($payload['message'] ?? ''));
+        $messageType = strtolower((string) ($payload['messageType'] ?? 'text'));
+        $mediaUrl = trim((string) ($payload['url'] ?? $payload['image'] ?? $payload['file'] ?? $payload['media'] ?? ''));
 
         Log::channel('wablas')->info('wablas.message.in', [
             'phone' => $phone,
+            'type' => $messageType,
             'message' => $message,
+            'media' => $mediaUrl !== '' ? $mediaUrl : null,
         ]);
 
-        // Proses pesan lewat bot tes (balasan dikirim via WhatsApp).
-        if ($phone !== null && $message !== '') {
-            app(\App\Support\WaBotService::class)->handle((string) $phone, $message);
+        if ($phone === null) {
+            return;
+        }
+
+        $bot = app(\App\Support\WaBotService::class);
+
+        // Pesan bergambar (mis. bukti transfer) -> tangani khusus (teruskan ke admin).
+        if (str_contains($messageType, 'image')
+            || ($mediaUrl !== '' && preg_match('/\.(jpe?g|png|webp|gif)(\?|$)/i', $mediaUrl) === 1)) {
+            $bot->handleImage((string) $phone, $mediaUrl, $message);
+
+            return;
+        }
+
+        // Pesan teks.
+        if ($message !== '') {
+            $bot->handle((string) $phone, $message);
         }
     }
 

@@ -492,25 +492,60 @@ class WaOrderService
             return null;
         }
 
-        // a) Kode pos 5 digit = sinyal terkuat.
-        if (preg_match('/\b(\d{5})\b/', $address, $m)) {
-            $r = $this->searchDestinations($m[1]);
+        // Kumpulkan kandidat keyword dari yang PALING presisi (mengandung nama
+        // kelurahan/kecamatan/kota) ke yang paling kasar. Kode pos sengaja TIDAK
+        // diprioritaskan: satu kode pos mencakup banyak kelurahan, jadi sering
+        // salah ambil. Nama wilayah lebih akurat.
+        $candidates = [];
+
+        // a) Ekstrak via prefix "Kec."/"Kecamatan"/"Kabupaten"/"Kota".
+        if (preg_match('/kec(?:amatan|\.)?\s+([a-z][a-z ]{2,28})/i', $address, $m)) {
+            $candidates[] = trim($m[1]);
+        }
+        if (preg_match('/(?:kab(?:upaten|\.)?|kota)\s+([a-z][a-z ]{2,28})/i', $address, $m)) {
+            $candidates[] = trim($m[1]);
+        }
+
+        // b) Ekor alamat (kelurahan, kecamatan, kota) langsung sebagai keyword —
+        //    seperti pencarian di web. Banyak pelanggan menulis tanpa prefix,
+        //    mis. "Mojokrapak, Tembelang, Jombang". Buang kode pos dari tiap bagian.
+        $provinces = [
+            'aceh', 'sumatera utara', 'sumatera barat', 'riau', 'kepulauan riau', 'jambi',
+            'sumatera selatan', 'bangka belitung', 'kepulauan bangka belitung', 'bengkulu',
+            'lampung', 'dki jakarta', 'jakarta', 'jawa barat', 'banten', 'jawa tengah',
+            'di yogyakarta', 'd.i. yogyakarta', 'yogyakarta', 'jogja', 'jawa timur', 'bali',
+            'nusa tenggara barat', 'ntb', 'nusa tenggara timur', 'ntt', 'kalimantan barat',
+            'kalimantan tengah', 'kalimantan selatan', 'kalimantan timur', 'kalimantan utara',
+            'sulawesi utara', 'gorontalo', 'sulawesi tengah', 'sulawesi barat',
+            'sulawesi selatan', 'sulawesi tenggara', 'maluku', 'maluku utara', 'papua',
+            'papua barat', 'papua selatan', 'papua tengah', 'papua pegunungan',
+            'papua barat daya', 'indonesia',
+        ];
+
+        $parts = array_values(array_filter(
+            array_map(fn (string $p): string => trim(preg_replace('/\b\d{5}\b/', '', $p) ?? ''), explode(',', $address)),
+            fn (string $p): bool => $p !== '' && ! in_array(strtolower($p), $provinces, true),
+        ));
+
+        // Coba jendela 3 lalu 2 bagian terakhir; juga versi yang membuang 1 bagian
+        // terakhir (untuk alamat berakhiran provinsi, mis. "..., Jombang, Jawa Timur").
+        foreach ([[-3, 3], [-2, 2], [-4, 3], [-3, 2]] as [$start, $len]) {
+            $slice = array_slice($parts, $start, $len);
+            if ($slice !== []) {
+                $candidates[] = trim(implode(' ', $slice));
+            }
+        }
+
+        foreach (array_values(array_unique(array_filter($candidates))) as $q) {
+            $r = $this->searchDestinations($q);
             if ($r !== []) {
                 return $r[0];
             }
         }
 
-        // b) Nama wilayah dari kata kunci (kecamatan, kabupaten/kota).
-        $queries = [];
-        if (preg_match('/kec(?:amatan|\.)?\s+([a-z][a-z ]{2,28})/i', $address, $m)) {
-            $queries[] = trim($m[1]);
-        }
-        if (preg_match('/(?:kab(?:upaten|\.)?|kota)\s+([a-z][a-z ]{2,28})/i', $address, $m)) {
-            $queries[] = trim($m[1]);
-        }
-
-        foreach ($queries as $q) {
-            $r = $this->searchDestinations($q);
+        // c) Fallback terakhir: kode pos (kurang presisi, ambil hasil pertama di area itu).
+        if (preg_match('/\b(\d{5})\b/', $address, $m)) {
+            $r = $this->searchDestinations($m[1]);
             if ($r !== []) {
                 return $r[0];
             }
