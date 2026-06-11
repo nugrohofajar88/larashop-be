@@ -26,4 +26,16 @@ class Setting extends Model
     {
         return filter_var(static::get('unique_code_enabled', '1'), FILTER_VALIDATE_BOOLEAN);
     }
+
+    /** Metode pembayaran transfer manual aktif (default aktif). */
+    public static function paymentTransferEnabled(): bool
+    {
+        return filter_var(static::get('payment_transfer_enabled', '1'), FILTER_VALIDATE_BOOLEAN);
+    }
+
+    /** Metode pembayaran QRIS aktif (default aktif). */
+    public static function paymentQrisEnabled(): bool
+    {
+        return filter_var(static::get('payment_qris_enabled', '1'), FILTER_VALIDATE_BOOLEAN);
+    }
 }

@@ -23,7 +23,7 @@ class QrisController extends Controller
         }
 
         $svc = app(QrislyService::class);
-        if (! $svc->enabled()) {
+        if (! $svc->enabled() || ! \App\Models\Setting::paymentQrisEnabled()) {
             return response()->json(['message' => 'Pembayaran QRIS belum aktif.'], 422);
         }
 

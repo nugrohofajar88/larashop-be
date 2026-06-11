@@ -282,7 +282,7 @@ class WaBotService
             .(($result['order_no'] ?? null) ? "\nResi: ".$result['order_no'] : '')
         );
 
-        $this->notifyCustomerPaid($order);
+        // Notifikasi ke pelanggan sudah ditangani OrderPaymentService::markPaid.
 
         return true;
     }
@@ -295,22 +295,6 @@ class WaBotService
         $candidates = array_values(array_unique([$phone, $norm, $local]));
 
         return User::query()->where('role', 'admin')->whereIn('phone', $candidates)->first();
-    }
-
-    /** Beri tahu pelanggan bahwa pembayarannya sudah dikonfirmasi. */
-    protected function notifyCustomerPaid(Order $order): void
-    {
-        $cust = $this->normalizePhone((string) ($order->user?->phone ?? $order->recipient_phone ?? ''));
-
-        if ($cust === '') {
-            return;
-        }
-
-        $this->wablas->sendMessage(
-            $cust,
-            "🎉 Pembayaran untuk pesanan *{$order->code}* sudah *dikonfirmasi*!\n\n"
-            ."Pesananmu segera kami proses & kirim. Terima kasih sudah belanja di *Akar Tani Kimia* 🌱"
-        );
     }
 
     /**

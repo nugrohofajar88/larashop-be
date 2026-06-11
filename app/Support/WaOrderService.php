@@ -354,14 +354,22 @@ class WaOrderService
         $order = $this->createOrder($phone, $session);
         $this->forget($phone);
 
-        // Pembayaran QRIS: generate QRIS + kirim gambar QR ke pelanggan.
-        if ($this->qrisly->enabled()) {
+        // Metode pembayaran yang ditawarkan diatur admin (Pengaturan Pembayaran).
+        // QRIS = teknis-aktif (API terkonfig) DAN dipilih admin.
+        $qrisOn = $this->qrisly->enabled() && \App\Models\Setting::paymentQrisEnabled();
+        $transferOn = \App\Models\Setting::paymentTransferEnabled();
+        if (! $qrisOn && ! $transferOn) {
+            $transferOn = true; // pengaman: jangan sampai tak ada metode bayar.
+        }
+
+        // Pembayaran QRIS: generate QRIS + kirim gambar QR (caption juga muat link).
+        if ($qrisOn) {
             $res = $this->qrisly->generateForOrder($order);
             if (($res['ok'] ?? false)) {
                 $imageUrl = $this->qrisly->qrImagePublicUrl($order->fresh());
                 if ($imageUrl !== '') {
                     $amountText = $this->money((int) $res['final_amount']);
-                    $this->wablas->sendMessage($phone, $this->orderConfirmationQris($order, (int) $res['final_amount']));
+                    $this->wablas->sendMessage($phone, $this->orderConfirmationQris($order, (int) $res['final_amount'], $transferOn));
 
                     // Caption SELALU menyertakan link QR. Di gateway/plan yang tak
                     // mendukung attachment (mis. Fonnte FREE) gambar di-drop tapi
@@ -376,7 +384,7 @@ class WaOrderService
             }
         }
 
-        // Fallback (QRIS nonaktif/gagal): transfer manual.
+        // QRIS nonaktif/gagal → transfer manual (info rekening).
         return $this->orderConfirmation($order, $session);
     }
 
@@ -699,13 +707,26 @@ class WaOrderService
             ."Admin akan memvalidasi pembayaranmu. 🙏";
     }
 
-    protected function orderConfirmationQris(Order $order, int $finalAmount): string
+    protected function orderConfirmationQris(Order $order, int $finalAmount, bool $includeTransfer = false): string
     {
         $lines = $order->items->map(
             fn ($i): string => "• {$i->quantity}x {$i->product_name}".
                 ($i->variant_label ? " ({$i->variant_label})" : '').
                 " = ".$this->money((int) $i->subtotal)
         )->implode("\n");
+
+        // Opsi transfer manual (kalau admin mengaktifkan QRIS + Transfer sekaligus).
+        $transferText = '';
+        if ($includeTransfer) {
+            $rekening = PaymentAccount::query()->active()->ordered()->get();
+            if ($rekening->isNotEmpty()) {
+                $transferText = "\n\n*Atau transfer manual* sebesar ".$this->money((int) $order->grand_total).":\n"
+                    .$rekening->map(
+                        fn (PaymentAccount $a): string => "• {$a->bank_name}: *{$a->account_number}* a.n. {$a->account_holder}"
+                    )->implode("\n")
+                    ."\nLalu kirim bukti transfer ke chat ini.";
+            }
+        }
 
         return "✅ *Pesanan berhasil dibuat!*\n\n"
             ."Kode: *{$order->code}*\n\n"
@@ -715,7 +736,8 @@ class WaOrderService
             ."*Total bayar: ".$this->money($finalAmount)."*\n\n"
             ."💳 *Pembayaran via QRIS* — scan QR yang dikirim berikut ini. "
             ."Nominal sudah otomatis sesuai total, jadi tinggal scan & bayar. "
-            ."Begitu lunas, pesanan langsung diproses. 🙏";
+            ."Begitu lunas, pesanan langsung diproses. 🙏"
+            .$transferText;
     }
 
     /* ----------------------------------------------------------------- */
