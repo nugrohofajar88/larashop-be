@@ -28,6 +28,7 @@ class WaOrderService
 
     public function __construct(
         private readonly WablasService $wablas,
+        private readonly QrislyService $qrisly,
     ) {
     }
 
@@ -350,10 +351,24 @@ class WaOrderService
         }
 
         $order = $this->createOrder($phone, $session);
-        $reply = $this->orderConfirmation($order, $session);
         $this->forget($phone);
 
-        return $reply;
+        // Pembayaran QRIS: generate QRIS + kirim gambar QR ke pelanggan.
+        if ($this->qrisly->enabled()) {
+            $res = $this->qrisly->generateForOrder($order);
+            if (($res['ok'] ?? false)) {
+                $imageUrl = $this->qrisly->qrImagePublicUrl($order->fresh());
+                if ($imageUrl !== '') {
+                    $this->wablas->sendMessage($phone, $this->orderConfirmationQris($order, (int) $res['final_amount']));
+                    $this->wablas->sendImage($phone, $imageUrl, '📷 Scan QR ini untuk membayar *'.$this->money((int) $res['final_amount']).'*. Berlaku 15 menit, pembayaran terkonfirmasi otomatis.');
+
+                    return '';
+                }
+            }
+        }
+
+        // Fallback (QRIS nonaktif/gagal): transfer manual.
+        return $this->orderConfirmation($order, $session);
     }
 
     /* ----------------------------------------------------------------- */
@@ -673,6 +688,25 @@ class WaOrderService
             .$rekText
             ."\nSilakan transfer sesuai *total di atas (termasuk kode unik)* lalu kirim bukti ke chat ini. "
             ."Admin akan memvalidasi pembayaranmu. 🙏";
+    }
+
+    protected function orderConfirmationQris(Order $order, int $finalAmount): string
+    {
+        $lines = $order->items->map(
+            fn ($i): string => "• {$i->quantity}x {$i->product_name}".
+                ($i->variant_label ? " ({$i->variant_label})" : '').
+                " = ".$this->money((int) $i->subtotal)
+        )->implode("\n");
+
+        return "✅ *Pesanan berhasil dibuat!*\n\n"
+            ."Kode: *{$order->code}*\n\n"
+            ."{$lines}\n"
+            ."Subtotal: ".$this->money((int) $order->items_total)."\n"
+            ."Ongkir: ".$this->money((int) $order->shipping_total)."\n"
+            ."*Total bayar: ".$this->money($finalAmount)."*\n\n"
+            ."💳 *Pembayaran via QRIS* — scan QR yang dikirim berikut ini. "
+            ."Nominal sudah otomatis sesuai total, jadi tinggal scan & bayar. "
+            ."Begitu lunas, pesanan langsung diproses. 🙏";
     }
 
     /* ----------------------------------------------------------------- */

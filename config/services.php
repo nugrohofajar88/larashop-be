@@ -54,6 +54,14 @@ return [
         'webhook_secret' => env('KOMERCE_WEBHOOK_SECRET'),
     ],
 
+    // QRISLY (pembayaran QRIS dinamis) — base_url & api_key SAMA dengan komerce_delivery.
+    'qrisly' => [
+        'enabled' => env('KOMERCE_QRISLY_ENABLED', false),
+        'webhook_secret' => env('KOMERCE_QRISLY_WEBHOOK_SECRET'),
+        // qris_id hasil upload-qris disimpan di Setting 'qrisly_qris_id'; ini fallback .env.
+        'qris_id' => env('KOMERCE_QRISLY_QRIS_ID'),
+    ],
+
     'shipping' => [
         // Pembagi berat volumetrik. Standar kurir domestik Indonesia = 6000.
         'volumetric_divisor' => (int) env('SHIPPING_VOLUMETRIC_DIVISOR', 6000),

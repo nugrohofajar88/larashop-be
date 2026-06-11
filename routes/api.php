@@ -15,13 +15,17 @@ use App\Http\Controllers\Api\CheckoutController;
 use App\Http\Controllers\Api\CustomerController;
 use App\Http\Controllers\Api\OrderController;
 use App\Http\Controllers\Api\ShippingController;
+use App\Http\Controllers\Api\AdminQrisController;
 use App\Http\Controllers\Api\KomerceWebhookController;
+use App\Http\Controllers\Api\QrisController;
+use App\Http\Controllers\Api\QrislyWebhookController;
 use App\Http\Controllers\Api\WablasWebhookController;
 use Illuminate\Support\Facades\Route;
 
 // Webhook publik (dipanggil layanan luar). Tanpa auth & tanpa throttle ketat.
 Route::post('v1/webhooks/wablas', [WablasWebhookController::class, 'handle'])->name('webhooks.wablas');
 Route::match(['post', 'put'], 'v1/webhooks/komerce/{token?}', [KomerceWebhookController::class, 'handle'])->name('webhooks.komerce');
+Route::post('v1/webhooks/qrisly/{secret?}', [QrislyWebhookController::class, 'handle'])->name('webhooks.qrisly');
 
 Route::prefix('v1')->middleware('throttle:api')->group(function (): void {
     Route::prefix('auth')->group(function (): void {
@@ -58,6 +62,8 @@ Route::prefix('v1')->middleware('throttle:api')->group(function (): void {
         Route::get('/customer/orders/{code}', [OrderController::class, 'show']);
         Route::post('/customer/orders/{code}/cancel', [OrderController::class, 'cancel']);
         Route::post('/customer/orders/{code}/complete', [OrderController::class, 'complete']);
+        Route::post('/customer/orders/{code}/qris', [QrisController::class, 'generate']);
+        Route::get('/customer/orders/{code}/qris/status', [QrisController::class, 'status']);
         Route::get('/checkout', [CheckoutController::class, 'show']);
     });
 
@@ -89,6 +95,10 @@ Route::prefix('v1')->middleware('throttle:api')->group(function (): void {
         Route::get('/orders/{order}/label', [AdminOrderController::class, 'printLabel']);
         Route::get('/orders/{order}/label-diy', [AdminOrderController::class, 'printLabelDiy']);
         Route::post('/orders/{order}/complete', [AdminOrderController::class, 'complete']);
+        Route::get('/qrisly', [AdminQrisController::class, 'index']);
+        Route::post('/qrisly/upload', [AdminQrisController::class, 'upload']);
+        Route::post('/qrisly/{qris}/activate', [AdminQrisController::class, 'activate']);
+        Route::delete('/qrisly/{qris}', [AdminQrisController::class, 'destroy']);
         Route::get('/shipments', [AdminShipmentController::class, 'index']);
         Route::get('/shipment-destinations/search', [AdminShipmentController::class, 'searchDestinations']);
         Route::get('/shipment-settings', [AdminShipmentController::class, 'settings']);
