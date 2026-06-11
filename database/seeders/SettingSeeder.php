@@ -38,6 +38,23 @@ class SettingSeeder extends Seeder
                 'created_at' => '2026-06-09 14:49:21',
                 'updated_at' => '2026-06-09 14:49:21',
             ],
+            // Metode pembayaran yang ditawarkan ke pelanggan (default dua-duanya aktif).
+            [
+                'id' => 5,
+                'key' => 'payment_transfer_enabled',
+                'value' => '1',
+                'created_at' => '2026-06-12 00:00:00',
+                'updated_at' => '2026-06-12 00:00:00',
+            ],
+            [
+                'id' => 6,
+                'key' => 'payment_qris_enabled',
+                'value' => '1',
+                'created_at' => '2026-06-12 00:00:00',
+                'updated_at' => '2026-06-12 00:00:00',
+            ],
+            // Catatan: `qrisly_qris_id` SENGAJA tidak di-seed — spesifik per lingkungan
+            // (hasil upload QRIS asli toko via menu admin QRIS).
         ]);
     }
 }

@@ -57,6 +57,10 @@ class OrderController extends Controller
                 'note' => $account->note,
             ])->all();
         $data['store_whatsapp'] = Setting::get('store_whatsapp', '');
+        $data['payment_methods'] = [
+            'transfer' => Setting::paymentTransferEnabled(),
+            'qris' => app(\App\Support\QrislyService::class)->enabled() && Setting::paymentQrisEnabled(),
+        ];
 
         return response()->json([
             'data' => $data,

@@ -212,7 +212,7 @@ class WaBotService
         $caption = "💸 *Konfirmasi pembayaran*\n"
             ."Pelanggan: {$name} (wa.me/{$customer})\n"
             ."Pesanan: *{$order->code}* — ".$this->money((int) $order->grand_total)."\n\n"
-            .(($imageUrl !== null && $imageUrl !== '') ? "Bukti transfer terlampir.\n\n" : '')
+            .(($imageUrl !== null && $imageUrl !== '') ? "Bukti transfer:\n".$imageUrl."\n\n" : '')
             ."Cek rekening, lalu *validasi*:\n"
             ."• lewat panel admin, atau\n"
             ."• balas pesan ini: *{$order->code} PAID*";
