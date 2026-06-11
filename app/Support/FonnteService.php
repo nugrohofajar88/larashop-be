@@ -24,12 +24,22 @@ class FonnteService implements WhatsappGateway
 
     public function sendImage(string $phone, string $imageUrl, string $caption = ''): bool
     {
-        // Fonnte kirim media via `url`; `message` jadi caption.
+        // Fonnte kirim media via `url`; `message` jadi caption. `filename` (dengan
+        // ekstensi) WAJIB supaya Fonnte mengenali tipe file — tanpa ini gambar
+        // sering tak terkirim (cuma teks).
         return $this->send([
             'target' => $this->normalize($phone),
             'message' => $caption,
             'url' => $imageUrl,
+            'filename' => $this->filenameFromUrl($imageUrl),
         ], $phone);
+    }
+
+    protected function filenameFromUrl(string $url): string
+    {
+        $name = basename((string) parse_url($url, PHP_URL_PATH));
+
+        return preg_match('/\.(jpe?g|png|webp|gif)$/i', $name) === 1 ? $name : 'image.png';
     }
 
     protected function send(array $payload, string $phone): bool

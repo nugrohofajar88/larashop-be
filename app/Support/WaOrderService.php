@@ -360,8 +360,16 @@ class WaOrderService
             if (($res['ok'] ?? false)) {
                 $imageUrl = $this->qrisly->qrImagePublicUrl($order->fresh());
                 if ($imageUrl !== '') {
+                    $amountText = $this->money((int) $res['final_amount']);
                     $this->wablas->sendMessage($phone, $this->orderConfirmationQris($order, (int) $res['final_amount']));
-                    $this->wablas->sendImage($phone, $imageUrl, '📷 Scan QR ini untuk membayar *'.$this->money((int) $res['final_amount']).'*. Berlaku 15 menit, pembayaran terkonfirmasi otomatis.');
+
+                    // Caption SELALU menyertakan link QR. Di gateway/plan yang tak
+                    // mendukung attachment (mis. Fonnte FREE) gambar di-drop tapi
+                    // caption (berisi link) tetap terkirim sebagai teks → pelanggan
+                    // tetap bisa buka QR-nya. Di plan ber-attachment, gambar muncul.
+                    $caption = '📷 Scan QR untuk bayar *'.$amountText.'* (berlaku 15 menit, lunas otomatis).'
+                        ."\n\nKalau gambar QR tidak muncul, buka link ini:\n".$imageUrl;
+                    $this->wablas->sendImage($phone, $imageUrl, $caption);
 
                     return '';
                 }
