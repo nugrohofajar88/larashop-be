@@ -151,6 +151,54 @@ class KomerceShipmentService
     }
 
     /**
+     * Ambil label/resi siap-print dari Komerce (paket enterprise: Print Label).
+     * POST /order/api/v1/orders/print-label?page=...&order_no=...
+     * Respons JSON: data.base_64 = PDF (base64), data.path = nama file. Return PDF mentah.
+     *
+     * @return array{ok:bool, pdf?:string, filename?:string, message?:string}
+     */
+    // page_6 = 100x150mm (label thermal standar). page_5=100x100, page_1/2/4=A4.
+    public function printLabel(string $orderNo, string $page = 'page_6'): array
+    {
+        if (trim($orderNo) === '') {
+            return ['ok' => false, 'message' => 'Order belum punya order_no Komerce (belum di-booking).'];
+        }
+
+        try {
+            $response = Http::acceptJson()
+                ->withHeaders(['x-api-key' => (string) config('services.komerce_delivery.api_key')])
+                ->baseUrl(rtrim((string) config('services.komerce_delivery.base_url'), '/'))
+                ->post('/order/api/v1/orders/print-label?page='.urlencode($page).'&order_no='.urlencode($orderNo));
+        } catch (\Throwable $e) {
+            Log::error('komerce.print_label.exception', ['order_no' => $orderNo, 'error' => $e->getMessage()]);
+
+            return ['ok' => false, 'message' => $e->getMessage()];
+        }
+
+        $body = $response->json() ?? [];
+
+        if (! $response->successful() || ($body['meta']['status'] ?? '') !== 'success') {
+            Log::warning('komerce.print_label.failed', ['order_no' => $orderNo, 'status' => $response->status(), 'meta' => $body['meta'] ?? null]);
+
+            return ['ok' => false, 'message' => (string) ($body['meta']['message'] ?? 'Gagal generate label.')];
+        }
+
+        $pdf = base64_decode((string) ($body['data']['base_64'] ?? ''), true);
+
+        if ($pdf === false || $pdf === '' || ! str_starts_with($pdf, '%PDF')) {
+            return ['ok' => false, 'message' => 'Respons label tidak valid (bukan PDF).'];
+        }
+
+        $path = (string) ($body['data']['path'] ?? '');
+
+        return [
+            'ok' => true,
+            'pdf' => $pdf,
+            'filename' => $path !== '' ? basename($path) : 'label-'.$orderNo.'.pdf',
+        ];
+    }
+
+    /**
      * Cari tarif yang cocok dengan kurir + layanan order.
      *
      * @return array{shipping_name:string,service_name:string,shipping_cost:int,shipping_cashback:int,service_fee:int}|null
@@ -226,7 +274,10 @@ class KomerceShipmentService
         $grandTotal = (int) $order->items_total + $shippingCost + $additionalCost;
 
         return [
-            'order_date' => now()->format('Y-m-d'),
+            // Komerce wajib WIB. Dipaksa Asia/Jakarta sbg pengaman: walau APP_TIMEZONE
+            // di host lupa di-set (balik UTC), order_date tetap benar, jadi tak kena
+            // tolak "date order can't before today" saat booking lewat tengah malam.
+            'order_date' => now()->setTimezone('Asia/Jakarta')->format('Y-m-d'),
             'brand_name' => (string) Setting::get('store_brand', 'Akar Tani Kimia'),
             'shipper_name' => (string) $origin->contact_name,
             'shipper_phone' => (string) $origin->contact_phone,

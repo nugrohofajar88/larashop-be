@@ -147,6 +147,28 @@ class AdminOrderController extends Controller
         ]);
     }
 
+    public function printLabel(Order $order): \Illuminate\Http\Response
+    {
+        if (trim((string) $order->komerce_order_no) === '') {
+            throw ValidationException::withMessages([
+                'order' => 'Order ini belum di-booking ke ekspedisi (tidak ada order_no Komerce).',
+            ]);
+        }
+
+        $result = app(KomerceShipmentService::class)->printLabel((string) $order->komerce_order_no);
+
+        if (! ($result['ok'] ?? false)) {
+            throw ValidationException::withMessages([
+                'label' => 'Gagal mengambil label: '.($result['message'] ?? 'tidak diketahui'),
+            ]);
+        }
+
+        return response($result['pdf'], 200, [
+            'Content-Type' => 'application/pdf',
+            'Content-Disposition' => 'inline; filename="'.($result['filename'] ?? 'label.pdf').'"',
+        ]);
+    }
+
     public function complete(Order $order): JsonResponse
     {
         if ($order->status !== 'shipped') {
