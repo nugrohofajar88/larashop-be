@@ -103,10 +103,12 @@ class AdminOrderController extends Controller
     public function schedulePickup(Request $request, Order $order): JsonResponse
     {
         $validated = $request->validate([
-            'pickup_date' => ['required', 'date'],
+            'pickup_date' => ['required', 'date', 'after_or_equal:today'],
             'pickup_time' => ['required', 'string', 'max:5'],
             'pickup_vehicle' => ['required', 'in:Motor,Mobil,Truk'],
         ]);
+
+        $this->assertPickupNotInPast($validated['pickup_date'], $validated['pickup_time']);
 
         if (trim((string) $order->komerce_order_no) === '') {
             throw ValidationException::withMessages([
@@ -153,10 +155,12 @@ class AdminOrderController extends Controller
         $validated = $request->validate([
             'order_codes' => ['required', 'array', 'min:1'],
             'order_codes.*' => ['string'],
-            'pickup_date' => ['required', 'date'],
+            'pickup_date' => ['required', 'date', 'after_or_equal:today'],
             'pickup_time' => ['required', 'string', 'max:5'],
             'pickup_vehicle' => ['required', 'in:Motor,Mobil,Truk'],
         ]);
+
+        $this->assertPickupNotInPast($validated['pickup_date'], $validated['pickup_time']);
 
         $orders = Order::query()
             ->whereIn('code', $validated['order_codes'])
@@ -214,6 +218,22 @@ class AdminOrderController extends Controller
             'message' => 'Pickup diproses: '.count($success).' berhasil'.($failed !== [] ? ', '.count($failed).' gagal' : '').'.',
             'summary' => ['success' => $success, 'failed' => $failed],
         ]);
+    }
+
+    /** Pastikan jadwal pickup (tanggal+jam, WIB) tidak di masa lalu. */
+    private function assertPickupNotInPast(string $date, string $time): void
+    {
+        try {
+            $when = \Illuminate\Support\Carbon::parse($date.' '.$time, 'Asia/Jakarta');
+        } catch (\Throwable $e) {
+            return; // format aneh — biar rule lain yang menangani.
+        }
+
+        if ($when->isBefore(now())) {
+            throw ValidationException::withMessages([
+                'pickup_time' => 'Jadwal pickup tidak boleh di waktu yang sudah lewat.',
+            ]);
+        }
     }
 
     public function printLabel(Order $order): \Illuminate\Http\Response
