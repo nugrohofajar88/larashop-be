@@ -18,7 +18,7 @@ class OrderPaymentService
      */
     public function markPaid(Order $order, string $source = 'admin'): array
     {
-        DB::transaction(function () use ($order): void {
+        DB::transaction(function () use ($order, $source): void {
             $order->update([
                 'status' => 'paid',
                 'payment_status' => 'Tervalidasi',
