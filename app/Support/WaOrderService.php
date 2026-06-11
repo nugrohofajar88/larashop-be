@@ -7,6 +7,7 @@ use App\Models\Order;
 use App\Models\PaymentAccount;
 use App\Models\Product;
 use App\Models\User;
+use App\Support\Contracts\WhatsappGateway;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -27,7 +28,7 @@ class WaOrderService
     private const TTL_MINUTES = 60;
 
     public function __construct(
-        private readonly WablasService $wablas,
+        private readonly WhatsappGateway $wablas,
         private readonly QrislyService $qrisly,
     ) {
     }

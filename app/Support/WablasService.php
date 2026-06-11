@@ -2,10 +2,11 @@
 
 namespace App\Support;
 
+use App\Support\Contracts\WhatsappGateway;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
-class WablasService
+class WablasService implements WhatsappGateway
 {
     /**
      * Kirim pesan teks WhatsApp via Wablas.

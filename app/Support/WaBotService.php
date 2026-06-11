@@ -6,6 +6,7 @@ use App\Models\Order;
 use App\Models\Product;
 use App\Models\User;
 use App\Models\WaMessage;
+use App\Support\Contracts\WhatsappGateway;
 use Illuminate\Support\Str;
 
 /**
@@ -17,7 +18,7 @@ use Illuminate\Support\Str;
 class WaBotService
 {
     public function __construct(
-        private readonly WablasService $wablas,
+        private readonly WhatsappGateway $wablas,
     ) {
     }
 
