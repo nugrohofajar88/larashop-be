@@ -151,6 +151,60 @@ class KomerceShipmentService
     }
 
     /**
+     * Pickup BANYAK order sekaligus (Komerce mendukung field `orders` array).
+     * Mengembalikan hasil per order_no: ['ok'=>bool, 'results'=>[order_no => ['status','awb']], 'message'].
+     *
+     * @param  array<int,string>  $orderNos
+     * @return array{ok:bool, results?:array<string,array{status:string,awb:string}>, message?:string}
+     */
+    public function requestPickupBulk(array $orderNos, string $date, string $time, string $vehicle): array
+    {
+        $orderNos = array_values(array_unique(array_filter(array_map('trim', $orderNos))));
+        if ($orderNos === []) {
+            return ['ok' => false, 'message' => 'Tidak ada order_no untuk dijemput.'];
+        }
+
+        $payload = [
+            'pickup_date' => $date,
+            'pickup_time' => $time,
+            'pickup_vehicle' => $vehicle,
+            'orders' => array_map(fn (string $no): array => ['order_no' => $no], $orderNos),
+        ];
+
+        try {
+            $response = Http::acceptJson()
+                ->withHeaders(['x-api-key' => (string) config('services.komerce_delivery.api_key')])
+                ->baseUrl(rtrim((string) config('services.komerce_delivery.base_url'), '/'))
+                ->post('/order/api/v1/pickup/request', $payload);
+        } catch (\Throwable $e) {
+            Log::error('komerce.pickup.bulk.exception', ['count' => count($orderNos), 'error' => $e->getMessage()]);
+
+            return ['ok' => false, 'message' => $e->getMessage()];
+        }
+
+        $body = $response->json() ?? [];
+        Log::info('komerce.pickup.bulk.response', ['count' => count($orderNos), 'status' => $response->status(), 'body' => $body]);
+
+        if (! $response->successful() || ($body['meta']['status'] ?? '') !== 'success') {
+            return ['ok' => false, 'message' => (string) ($body['meta']['message'] ?? 'Gagal menjadwalkan pickup.'), 'response' => $body];
+        }
+
+        // data[] berisi per-order: {status, order_no, awb}. Petakan by order_no.
+        $results = [];
+        foreach ((array) ($body['data'] ?? []) as $item) {
+            $no = (string) (((array) $item)['order_no'] ?? '');
+            if ($no !== '') {
+                $results[$no] = [
+                    'status' => (string) (((array) $item)['status'] ?? ''),
+                    'awb' => (string) (((array) $item)['awb'] ?? ''),
+                ];
+            }
+        }
+
+        return ['ok' => true, 'results' => $results, 'response' => $body];
+    }
+
+    /**
      * Ambil label/resi siap-print dari Komerce (paket enterprise: Print Label).
      * POST /order/api/v1/orders/print-label?page=...&order_no=...
      * Respons JSON: data.base_64 = PDF (base64), data.path = nama file. Return PDF mentah.

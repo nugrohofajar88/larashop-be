@@ -89,6 +89,7 @@ Route::prefix('v1')->middleware('throttle:api')->group(function (): void {
         Route::put('/customers/{customer}/addresses/{address}', [AdminCustomerController::class, 'updateAddress']);
         Route::delete('/customers/{customer}/addresses/{address}', [AdminCustomerController::class, 'destroyAddress']);
         Route::get('/orders', [AdminOrderController::class, 'index']);
+        Route::post('/orders/schedule-pickup-bulk', [AdminOrderController::class, 'schedulePickupBulk']);
         Route::get('/orders/{order}', [AdminOrderController::class, 'show']);
         Route::post('/orders/{order}/validate-payment', [AdminOrderController::class, 'validatePayment']);
         Route::post('/orders/{order}/cancel', [AdminOrderController::class, 'cancel']);

@@ -147,6 +147,75 @@ class AdminOrderController extends Controller
         ]);
     }
 
+    /** Jadwalkan pickup BANYAK order sekaligus (1 request ke Komerce). */
+    public function schedulePickupBulk(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'order_codes' => ['required', 'array', 'min:1'],
+            'order_codes.*' => ['string'],
+            'pickup_date' => ['required', 'date'],
+            'pickup_time' => ['required', 'string', 'max:5'],
+            'pickup_vehicle' => ['required', 'in:Motor,Mobil,Truk'],
+        ]);
+
+        $orders = Order::query()
+            ->whereIn('code', $validated['order_codes'])
+            ->whereNotNull('komerce_order_no')
+            ->where('komerce_order_no', '!=', '')
+            ->get();
+
+        if ($orders->isEmpty()) {
+            throw ValidationException::withMessages([
+                'order_codes' => 'Tidak ada order valid (sudah di-booking) untuk dijemput.',
+            ]);
+        }
+
+        $orderNos = $orders->pluck('komerce_order_no')->map(fn ($v): string => (string) $v)->all();
+
+        $result = app(KomerceShipmentService::class)->requestPickupBulk(
+            $orderNos,
+            $validated['pickup_date'],
+            $validated['pickup_time'],
+            $validated['pickup_vehicle'],
+        );
+
+        if (! ($result['ok'] ?? false)) {
+            throw ValidationException::withMessages([
+                'pickup' => 'Pickup gagal: '.($result['message'] ?? 'tidak diketahui'),
+            ]);
+        }
+
+        $results = (array) ($result['results'] ?? []);
+        $note = 'Pickup dijadwalkan '.$validated['pickup_date'].' '.$validated['pickup_time'].' ('.$validated['pickup_vehicle'].')';
+        $success = [];
+        $failed = [];
+
+        foreach ($orders as $order) {
+            $r = $results[(string) $order->komerce_order_no] ?? null;
+            $awb = (string) ($r['awb'] ?? '');
+
+            if ($r !== null && ($r['status'] ?? '') === 'success') {
+                $order->update([
+                    'status' => 'processing',
+                    'awb' => $awb !== '' ? $awb : $order->awb,
+                    'shipment_note' => $note.($awb !== '' ? '. AWB: '.$awb : '.'),
+                ]);
+                $order->logTracking('pickup_scheduled', 'admin', [
+                    'awb' => $awb !== '' ? $awb : null,
+                    'note' => $note,
+                ]);
+                $success[] = $order->code;
+            } else {
+                $failed[] = $order->code;
+            }
+        }
+
+        return response()->json([
+            'message' => 'Pickup diproses: '.count($success).' berhasil'.($failed !== [] ? ', '.count($failed).' gagal' : '').'.',
+            'summary' => ['success' => $success, 'failed' => $failed],
+        ]);
+    }
+
     public function printLabel(Order $order): \Illuminate\Http\Response
     {
         if (trim((string) $order->komerce_order_no) === '') {
