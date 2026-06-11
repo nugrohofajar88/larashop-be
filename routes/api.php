@@ -87,6 +87,7 @@ Route::prefix('v1')->middleware('throttle:api')->group(function (): void {
         Route::post('/orders/{order}/process-shipment', [AdminOrderController::class, 'processShipment']);
         Route::post('/orders/{order}/schedule-pickup', [AdminOrderController::class, 'schedulePickup']);
         Route::get('/orders/{order}/label', [AdminOrderController::class, 'printLabel']);
+        Route::get('/orders/{order}/label-diy', [AdminOrderController::class, 'printLabelDiy']);
         Route::post('/orders/{order}/complete', [AdminOrderController::class, 'complete']);
         Route::get('/shipments', [AdminShipmentController::class, 'index']);
         Route::get('/shipment-destinations/search', [AdminShipmentController::class, 'searchDestinations']);

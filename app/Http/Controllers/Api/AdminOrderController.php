@@ -169,6 +169,75 @@ class AdminOrderController extends Controller
         ]);
     }
 
+    /**
+     * Label DIY (dibuat sendiri pakai dompdf + barcode), TERPISAH dari label resmi
+     * Komerce. Untuk evaluasi layout; kalau tak dipakai tinggal hapus method + route.
+     */
+    public function printLabelDiy(Order $order): \Illuminate\Http\Response
+    {
+        $order->loadMissing('items');
+
+        $origin = \App\Models\ShipmentOrigin::query()
+            ->where('is_active', true)->orderByDesc('is_default')->orderBy('id')->first();
+        $address = \App\Models\CustomerAddress::query()->find($order->customer_address_id);
+
+        $weightGrams = (int) $order->items->sum(fn ($i): int => (int) ($i->weight_grams ?: 0) * (int) $i->quantity);
+        $weightKg = number_format(max($weightGrams, 1) / 1000, 2);
+
+        $region = $address ? trim(implode(', ', array_filter([
+            $address->subdistrict, $address->district, $address->city, $address->postal_code,
+        ]))) : '';
+
+        $awb = (string) ($order->awb ?: '');
+        $barcode = '';
+        if ($awb !== '') {
+            $barcode = (new \Picqer\Barcode\BarcodeGeneratorHTML())
+                ->getBarcode($awb, \Picqer\Barcode\BarcodeGeneratorHTML::TYPE_CODE_128, 2, 48);
+        }
+
+        $logoFile = public_path('img/label-logo.png');
+        $logo = is_file($logoFile)
+            ? 'data:image/png;base64,'.base64_encode((string) file_get_contents($logoFile))
+            : '';
+
+        $data = [
+            'logo' => $logo,
+            'brand' => (string) \App\Models\Setting::get('store_brand', 'Akar Tani Kimia'),
+            'courier' => strtoupper((string) ($order->shipping_courier_code ?: '-')),
+            'service' => (string) ($order->shipping_service_code ?: ($order->shipping_service_name ?: '-')),
+            'awb' => $awb !== '' ? $awb : 'Belum ada resi',
+            'barcode' => $barcode,
+            'weight' => $weightKg,
+            'totalQty' => (int) $order->items->sum('quantity'),
+            'sender' => [
+                'name' => (string) ($origin->contact_name ?? '-'),
+                'phone' => (string) ($origin->contact_phone ?? '-'),
+                'address' => (string) ($origin->address_line ?? '-'),
+            ],
+            'receiver' => [
+                'name' => (string) ($order->recipient_name ?: ($address->recipient_name ?? '-')),
+                'phone' => (string) ($order->recipient_phone ?: ($address->recipient_phone ?? '-')),
+                'address' => (string) ($address->address_line ?? '-'),
+                'region' => $region,
+            ],
+            'items' => $order->items->map(fn ($i): array => [
+                'qty' => (int) $i->quantity,
+                'name' => trim($i->product_name.' '.($i->variant_label ? '('.$i->variant_label.')' : '')),
+            ])->all(),
+            'note' => (string) ($order->note ?? ''),
+            'orderId' => (string) ($order->komerce_order_no ?: '-'),
+            'code' => (string) $order->code,
+        ];
+
+        $pdf = \Barryvdh\DomPDF\Facade\Pdf::loadView('labels.diy', $data)
+            ->setPaper([0, 0, 283.465, 425.197]); // 100x150mm dalam point
+
+        return response($pdf->output(), 200, [
+            'Content-Type' => 'application/pdf',
+            'Content-Disposition' => 'inline; filename="label-diy-'.$order->code.'.pdf"',
+        ]);
+    }
+
     public function complete(Order $order): JsonResponse
     {
         if ($order->status !== 'shipped') {
