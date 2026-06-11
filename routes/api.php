@@ -25,7 +25,7 @@ use Illuminate\Support\Facades\Route;
 
 // Webhook publik (dipanggil layanan luar). Tanpa auth & tanpa throttle ketat.
 Route::post('v1/webhooks/wablas', [WablasWebhookController::class, 'handle'])->name('webhooks.wablas');
-Route::post('v1/webhooks/fonnte/{secret?}', [FonnteWebhookController::class, 'handle'])->name('webhooks.fonnte');
+Route::match(['get', 'post'], 'v1/webhooks/fonnte/{secret?}', [FonnteWebhookController::class, 'handle'])->name('webhooks.fonnte');
 Route::match(['post', 'put'], 'v1/webhooks/komerce/{token?}', [KomerceWebhookController::class, 'handle'])->name('webhooks.komerce');
 Route::post('v1/webhooks/qrisly/{secret?}', [QrislyWebhookController::class, 'handle'])->name('webhooks.qrisly');
 
