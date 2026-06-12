@@ -17,16 +17,30 @@ class KomerceWebhookController extends Controller
 {
     /** Mapping status Komerce -> status order internal. */
     private const STATUS_MAP = [
+        // Vocab Komerce ASLI = Bahasa Inggris (Packed/Sent/Received/Problem/Return/Return Done).
+        'packed' => 'processing',
+        'sent' => 'shipped',
+        'received' => 'completed',
+        // Indonesia dipertahankan untuk jaga-jaga (kalau ada flow lain).
         'diajukan' => 'processing',
         'dijemput' => 'shipped',
         'dikirim' => 'shipped',
         'selesai' => 'completed',
-        // 'dibatalkan' SENGAJA tidak di-auto-map: pembatalan butuh reversal saldo/kode unik,
-        // jadi hanya dicatat di note agar admin menanganinya manual.
+        // 'problem' / 'return' / 'return done' / 'dibatalkan' SENGAJA tidak di-auto-map:
+        // butuh penanganan manual (reversal/retur) — hanya dicatat di note & tracking.
     ];
 
     /** Mapping status Komerce -> status di timeline tracking (lebih halus). */
     private const TRACK_MAP = [
+        // Vocab Komerce Inggris.
+        'packed' => 'packed',
+        'sent' => 'in_transit',
+        'received' => 'delivered',
+        'problem' => 'problem',
+        'return' => 'returned',
+        'return done' => 'returned',
+        'return_done' => 'returned',
+        // Indonesia (jaga-jaga).
         'diajukan' => 'submitted',
         'dijemput' => 'picked_up',
         'dikirim' => 'in_transit',

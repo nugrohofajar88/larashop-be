@@ -97,7 +97,10 @@ class WablasWebhookController extends Controller
             return;
         }
 
-        $phone = $payload['phone'] ?? $payload['sender'] ?? null;
+        // Balas ke PENGIRIM pesan. `sender` = nomor pengirim asli (customer);
+        // `phone` di sebagian versi Wablas = nomor DEVICE/toko, jadi `sender`
+        // diutamakan supaya balasan tak nyasar ke nomor toko sendiri.
+        $phone = $payload['sender'] ?? $payload['phone'] ?? null;
         $message = trim((string) ($payload['message'] ?? ''));
         $messageType = strtolower((string) ($payload['messageType'] ?? 'text'));
         $mediaUrl = trim((string) ($payload['url'] ?? $payload['image'] ?? $payload['file'] ?? $payload['media'] ?? ''));
