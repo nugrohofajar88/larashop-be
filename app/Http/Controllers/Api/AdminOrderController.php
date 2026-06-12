@@ -249,6 +249,15 @@ class AdminOrderController extends Controller
             ]);
         }
 
+        // Batas keras: Komerce print-label lambat + ada Connection Timeout web server.
+        // >5 order beresiko request diputus server. Dibatasi 5 per cetak.
+        $maxLabels = 5;
+        if ($orders->count() > $maxLabels) {
+            throw ValidationException::withMessages([
+                'order_codes' => 'Maksimal '.$maxLabels.' label per cetak (kamu pilih '.$orders->count().' order ber-label). Kurangi dulu pilihannya.',
+            ]);
+        }
+
         // Longgarkan batas eksekusi PHP; tetap dibatasi Connection Timeout web server.
         @set_time_limit(0);
 
