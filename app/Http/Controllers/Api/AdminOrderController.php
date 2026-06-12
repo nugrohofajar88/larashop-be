@@ -162,15 +162,19 @@ class AdminOrderController extends Controller
 
         $this->assertPickupNotInPast($validated['pickup_date'], $validated['pickup_time']);
 
+        // Hanya order PAID (belum dijemput) yang boleh dijadwalkan pickup. Order
+        // 'processing' (sudah dijemput, punya AWB) sengaja dikecualikan supaya tak
+        // ikut ter-pickup ulang saat admin "select all".
         $orders = Order::query()
             ->whereIn('code', $validated['order_codes'])
+            ->where('status', 'paid')
             ->whereNotNull('komerce_order_no')
             ->where('komerce_order_no', '!=', '')
             ->get();
 
         if ($orders->isEmpty()) {
             throw ValidationException::withMessages([
-                'order_codes' => 'Tidak ada order valid (sudah di-booking) untuk dijemput.',
+                'order_codes' => 'Tidak ada order berstatus "paid" (siap dijemput) di antara yang dipilih.',
             ]);
         }
 
