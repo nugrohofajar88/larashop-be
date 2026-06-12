@@ -220,6 +220,42 @@ class AdminOrderController extends Controller
         ]);
     }
 
+    /** Tandai BANYAK order (status processing) jadi "shipped" sekaligus. */
+    public function markShippedBulk(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'order_codes' => ['required', 'array', 'min:1'],
+            'order_codes.*' => ['string'],
+        ]);
+
+        $orders = Order::query()
+            ->whereIn('code', $validated['order_codes'])
+            ->where('status', 'processing')
+            ->get();
+
+        if ($orders->isEmpty()) {
+            throw ValidationException::withMessages([
+                'order_codes' => 'Tidak ada order berstatus "processing" untuk ditandai dikirim.',
+            ]);
+        }
+
+        $shipped = [];
+        foreach ($orders as $order) {
+            $order->update([
+                'status' => 'shipped',
+                'shipment_note' => 'Paket sudah diserahkan ke kurir.'.($order->awb ? ' AWB: '.$order->awb : ''),
+                'shipped_at' => $order->shipped_at ?? now(),
+            ]);
+            $order->logTracking('in_transit', 'admin');
+            $shipped[] = $order->code;
+        }
+
+        return response()->json([
+            'message' => count($shipped).' order ditandai dikirim.',
+            'summary' => ['success' => $shipped],
+        ]);
+    }
+
     /** Pastikan jadwal pickup (tanggal+jam, WIB) tidak di masa lalu. */
     private function assertPickupNotInPast(string $date, string $time): void
     {
