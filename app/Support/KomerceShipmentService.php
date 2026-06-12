@@ -231,6 +231,65 @@ class KomerceShipmentService
             return ['ok' => false, 'message' => $e->getMessage()];
         }
 
+        return $this->parseLabelResponse($orderNo, $response);
+    }
+
+    /**
+     * Ambil BANYAK label sekaligus secara PARALEL (Http::pool) lalu kembalikan
+     * hasil per order_no. Jauh lebih cepat daripada loop berurutan — penting
+     * supaya total waktu muat di bawah Connection Timeout web server.
+     *
+     * @param  array<int,string>  $orderNos
+     * @param  string  $page
+     * @return array<string,array{ok:bool,pdf?:string,filename?:string,message?:string}>
+     */
+    public function printLabelsConcurrent(array $orderNos, string $page = 'page_6'): array
+    {
+        $orderNos = array_values(array_unique(array_filter(array_map('trim', $orderNos))));
+        if ($orderNos === []) {
+            return [];
+        }
+
+        $apiKey = (string) config('services.komerce_delivery.api_key');
+        $baseUrl = rtrim((string) config('services.komerce_delivery.base_url'), '/');
+
+        $responses = Http::pool(fn (\Illuminate\Http\Client\Pool $pool) => array_map(
+            fn (string $no) => $pool->as($no)
+                ->acceptJson()
+                ->withHeaders(['x-api-key' => $apiKey])
+                ->baseUrl($baseUrl)
+                ->connectTimeout(10)
+                ->timeout(25)
+                ->post('/order/api/v1/orders/print-label?page='.urlencode($page).'&order_no='.urlencode($no)),
+            $orderNos
+        ));
+
+        $out = [];
+        foreach ($orderNos as $no) {
+            $resp = $responses[$no] ?? null;
+
+            // Saat koneksi gagal, pool mengisi instance exception, bukan Response.
+            if ($resp instanceof \Throwable) {
+                Log::error('komerce.print_label.exception', ['order_no' => $no, 'error' => $resp->getMessage()]);
+                $out[$no] = ['ok' => false, 'message' => $resp->getMessage()];
+
+                continue;
+            }
+
+            $out[$no] = $this->parseLabelResponse($no, $resp);
+        }
+
+        return $out;
+    }
+
+    /**
+     * Parse satu respons print-label Komerce jadi ['ok','pdf','filename'|'message'].
+     *
+     * @param  \Illuminate\Http\Client\Response  $response
+     * @return array{ok:bool,pdf?:string,filename?:string,message?:string}
+     */
+    protected function parseLabelResponse(string $orderNo, $response): array
+    {
         $body = $response->json() ?? [];
 
         if (! $response->successful() || ($body['meta']['status'] ?? '') !== 'success') {

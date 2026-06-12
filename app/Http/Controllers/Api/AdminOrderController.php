@@ -249,19 +249,24 @@ class AdminOrderController extends Controller
             ]);
         }
 
-        // Tiap order = 1 call Komerce (≤20s). Untuk banyak order, longgarkan batas
-        // eksekusi PHP supaya tidak terbunuh di tengah loop.
+        // Longgarkan batas eksekusi PHP; tetap dibatasi Connection Timeout web server.
         @set_time_limit(0);
 
         $svc = app(KomerceShipmentService::class);
+
+        // Ambil semua label PARALEL (bukan satu-per-satu) supaya total cepat dan
+        // tidak kena Request Timeout server. Hasil dipetakan per komerce_order_no.
+        $labels = $svc->printLabelsConcurrent(
+            $orders->pluck('komerce_order_no')->map(fn ($n) => (string) $n)->all()
+        );
+
         $merger = new \setasign\Fpdi\Fpdi();
         $added = 0;
         $failed = [];
 
         foreach ($orders as $order) {
-            @set_time_limit(60);
-            $res = $svc->printLabel((string) $order->komerce_order_no);
-            if (! ($res['ok'] ?? false) || empty($res['pdf'])) {
+            $res = $labels[(string) $order->komerce_order_no] ?? null;
+            if (! is_array($res) || ! ($res['ok'] ?? false) || empty($res['pdf'])) {
                 $failed[] = $order->code;
 
                 continue;
