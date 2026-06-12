@@ -16,8 +16,11 @@ class AdminOrderController extends Controller
 {
     public function index(): JsonResponse
     {
+        // 'draft' = order belum disubmit pelanggan (keranjang/checkout belum selesai),
+        // jangan tampilkan di daftar pesanan admin.
         $orders = Order::query()
             ->with(['items', 'user'])
+            ->where('status', '!=', 'draft')
             ->orderByDesc('id')
             ->get();
 
@@ -221,6 +224,67 @@ class AdminOrderController extends Controller
         return response()->json([
             'message' => 'Pickup diproses: '.count($success).' berhasil'.($failed !== [] ? ', '.count($failed).' gagal' : '').'.',
             'summary' => ['success' => $success, 'failed' => $failed],
+        ]);
+    }
+
+    /** Cetak label BANYAK order sekaligus: ambil tiap label dari Komerce lalu GABUNG jadi 1 PDF. */
+    public function printLabelsBulk(Request $request): \Illuminate\Http\Response
+    {
+        $validated = $request->validate([
+            'order_codes' => ['required', 'array', 'min:1'],
+            'order_codes.*' => ['string'],
+        ]);
+
+        // Hanya order yang sudah di-booking (punya komerce_order_no) yang ada labelnya.
+        $orders = Order::query()
+            ->whereIn('code', $validated['order_codes'])
+            ->whereNotNull('komerce_order_no')
+            ->where('komerce_order_no', '!=', '')
+            ->orderBy('id')
+            ->get();
+
+        if ($orders->isEmpty()) {
+            throw ValidationException::withMessages([
+                'order_codes' => 'Tidak ada order ber-label (sudah di-booking) di antara yang dipilih.',
+            ]);
+        }
+
+        $svc = app(KomerceShipmentService::class);
+        $merger = new \setasign\Fpdi\Fpdi();
+        $added = 0;
+        $failed = [];
+
+        foreach ($orders as $order) {
+            $res = $svc->printLabel((string) $order->komerce_order_no);
+            if (! ($res['ok'] ?? false) || empty($res['pdf'])) {
+                $failed[] = $order->code;
+
+                continue;
+            }
+
+            try {
+                $pages = $merger->setSourceFile(\setasign\Fpdi\PdfParser\StreamReader::createByString($res['pdf']));
+                for ($i = 1; $i <= $pages; $i++) {
+                    $tpl = $merger->importPage($i);
+                    $size = $merger->getTemplateSize($tpl);
+                    $merger->AddPage($size['orientation'], [$size['width'], $size['height']]);
+                    $merger->useTemplate($tpl);
+                }
+                $added++;
+            } catch (\Throwable $e) {
+                $failed[] = $order->code;
+            }
+        }
+
+        if ($added === 0) {
+            throw ValidationException::withMessages([
+                'order_codes' => 'Gagal mengambil label semua order'.($failed !== [] ? ': '.implode(', ', $failed) : '').'.',
+            ]);
+        }
+
+        return response((string) $merger->Output('S'), 200, [
+            'Content-Type' => 'application/pdf',
+            'Content-Disposition' => 'inline; filename="labels-'.$added.'.pdf"',
         ]);
     }
 
