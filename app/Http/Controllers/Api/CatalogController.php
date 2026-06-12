@@ -15,7 +15,7 @@ class CatalogController extends Controller
         $products = Product::query()
             ->with(['category', 'images', 'variants'])
             ->where('public_status', 'active')
-            ->where('stock', '>', 1);
+            ->available();
         $search = trim($request->string('search')->toString());
         $category = $request->string('category')->toString();
         $status = $request->string('status')->toString();
@@ -39,9 +39,17 @@ class CatalogController extends Controller
             }
         }
 
+        // Harga acuan untuk sort = harga varian default produk (kolom price product sudah dihapus).
+        $defaultVariantPrice = \App\Models\ProductVariant::query()
+            ->selectRaw('price')
+            ->whereColumn('product_id', 'products.id')
+            ->orderByDesc('is_default')
+            ->orderBy('sort_order')
+            ->limit(1);
+
         match ($sort) {
-            'price_asc' => $products->orderBy('price'),
-            'price_desc' => $products->orderByDesc('price'),
+            'price_asc' => $products->orderBy($defaultVariantPrice),
+            'price_desc' => $products->orderByDesc($defaultVariantPrice),
             'name_asc' => $products->orderBy('name'),
             default => $products->orderByDesc('is_featured')->orderByDesc('published_at')->orderBy('name'),
         };
@@ -65,7 +73,7 @@ class CatalogController extends Controller
                 'categories' => Product::query()
                     ->with('category')
                     ->where('public_status', 'active')
-                    ->where('stock', '>', 1)
+                    ->available()
                     ->get()
                     ->pluck('category.name')
                     ->unique()
@@ -81,7 +89,7 @@ class CatalogController extends Controller
         $product = Product::query()
             ->with(['category', 'images', 'variants'])
             ->where('public_status', 'active')
-            ->where('stock', '>', 1)
+            ->available()
             ->where('slug', $slug)
             ->first();
 
@@ -90,7 +98,7 @@ class CatalogController extends Controller
         $relatedProducts = Product::query()
             ->with(['category', 'images', 'variants'])
             ->where('public_status', 'active')
-            ->where('stock', '>', 1)
+            ->available()
             ->where('id', '!=', $product->id)
             ->where('category_id', $product->category_id)
             ->take(3)
@@ -101,7 +109,7 @@ class CatalogController extends Controller
             $fallbackProducts = Product::query()
                 ->with(['category', 'images', 'variants'])
                 ->where('public_status', 'active')
-                ->where('stock', '>', 1)
+                ->available()
                 ->whereNotIn('id', $existingIds)
                 ->take(3 - $relatedProducts->count())
                 ->get();

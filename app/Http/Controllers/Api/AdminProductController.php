@@ -50,8 +50,8 @@ class AdminProductController extends Controller
             $category = Category::query()->where('slug', $validated['category_slug'])->firstOrFail();
             $imagePaths = $validated['image_paths'] ?? [];
             $variants = $this->resolvedVariants($validated);
-            $defaultVariant = $this->defaultVariant($variants);
 
+            // Harga/stok/berat/dimensi TIDAK lagi disimpan di products — sumbernya varian.
             $product = Product::create([
                 'category_id' => $category->id,
                 'sku' => $validated['sku'],
@@ -59,14 +59,6 @@ class AdminProductController extends Controller
                 'name' => $validated['name'],
                 'short_description' => $validated['short_description'] ?? null,
                 'description' => $validated['description'],
-                'price' => $defaultVariant['price'],
-                'compare_at_price' => $defaultVariant['compare_at_price'],
-                'weight_label' => $defaultVariant['label'],
-                'weight_grams' => $defaultVariant['weight_grams'],
-                'length_cm' => $defaultVariant['length_cm'],
-                'width_cm' => $defaultVariant['width_cm'],
-                'height_cm' => $defaultVariant['height_cm'],
-                'stock' => $this->totalVariantStock($variants),
                 'public_status' => $validated['public_status'],
                 'catalog_status' => $validated['catalog_status'],
                 'badge_label' => $validated['badge_label'] ?? null,
@@ -95,8 +87,8 @@ class AdminProductController extends Controller
             $category = Category::query()->where('slug', $validated['category_slug'])->firstOrFail();
             $imagePaths = $validated['image_paths'] ?? null;
             $variants = $this->resolvedVariants($validated);
-            $defaultVariant = $this->defaultVariant($variants);
 
+            // Harga/stok/berat/dimensi TIDAK lagi disimpan di products — sumbernya varian.
             $product->update([
                 'category_id' => $category->id,
                 'sku' => $validated['sku'],
@@ -104,14 +96,6 @@ class AdminProductController extends Controller
                 'name' => $validated['name'],
                 'short_description' => $validated['short_description'] ?? null,
                 'description' => $validated['description'],
-                'price' => $defaultVariant['price'],
-                'compare_at_price' => $defaultVariant['compare_at_price'],
-                'weight_label' => $defaultVariant['label'],
-                'weight_grams' => $defaultVariant['weight_grams'],
-                'length_cm' => $defaultVariant['length_cm'],
-                'width_cm' => $defaultVariant['width_cm'],
-                'height_cm' => $defaultVariant['height_cm'],
-                'stock' => $this->totalVariantStock($variants),
                 'public_status' => $validated['public_status'],
                 'catalog_status' => $validated['catalog_status'],
                 'badge_label' => $validated['badge_label'] ?? null,

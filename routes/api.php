@@ -3,6 +3,7 @@
 use App\Http\Controllers\Api\AdminAccountController;
 use App\Http\Controllers\Api\AdminCategoryController;
 use App\Http\Controllers\Api\AdminCustomerController;
+use App\Http\Controllers\Api\AdminDashboardController;
 use App\Http\Controllers\Api\AdminOrderController;
 use App\Http\Controllers\Api\AdminPaymentAccountController;
 use App\Http\Controllers\Api\AdminProductController;
@@ -70,6 +71,7 @@ Route::prefix('v1')->middleware('throttle:api')->group(function (): void {
     });
 
     Route::prefix('admin')->middleware(['auth:sanctum', 'role:admin'])->group(function (): void {
+        Route::get('/dashboard', [AdminDashboardController::class, 'index']);
         Route::get('/accounts', [AdminAccountController::class, 'index']);
         Route::post('/accounts', [AdminAccountController::class, 'store']);
         Route::get('/accounts/{account}', [AdminAccountController::class, 'show']);
@@ -95,6 +97,7 @@ Route::prefix('v1')->middleware('throttle:api')->group(function (): void {
         Route::get('/orders/{order}', [AdminOrderController::class, 'show']);
         Route::post('/orders/{order}/validate-payment', [AdminOrderController::class, 'validatePayment']);
         Route::post('/orders/{order}/cancel', [AdminOrderController::class, 'cancel']);
+        Route::post('/orders/{order}/reject-cancellation', [AdminOrderController::class, 'rejectCancellation']);
         Route::post('/orders/{order}/process-shipment', [AdminOrderController::class, 'processShipment']);
         Route::post('/orders/{order}/schedule-pickup', [AdminOrderController::class, 'schedulePickup']);
         Route::get('/orders/{order}/label', [AdminOrderController::class, 'printLabel']);

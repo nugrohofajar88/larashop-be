@@ -388,6 +388,13 @@ class ApiData
             'shipping_service' => $order->shipping_service_name,
             'shipping_estimate' => $order->shipping_estimate_days,
             'awb' => $order->awb,
+            // Pembatalan: flag pengajuan (paid/processing menunggu admin) + apakah
+            // customer masih boleh menekan tombol batal/ajukan batal.
+            'cancel_requested' => $order->cancel_requested_at !== null,
+            'cancel_requested_at' => $order->cancel_requested_at?->format('Y-m-d H:i'),
+            'can_cancel' => trim((string) $order->awb) === ''
+                && $order->cancel_requested_at === null
+                && in_array($order->status, ['pending_payment', 'paid', 'processing'], true),
             'address' => $order->address_snapshot,
             'items' => $order->items->map(fn ($item) => [
                 'name' => $item->product_name,

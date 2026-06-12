@@ -18,14 +18,6 @@ class Product extends Model
         'name',
         'short_description',
         'description',
-        'price',
-        'compare_at_price',
-        'weight_label',
-        'weight_grams',
-        'length_cm',
-        'width_cm',
-        'height_cm',
-        'stock',
         'public_status',
         'catalog_status',
         'badge_label',
@@ -38,18 +30,82 @@ class Product extends Model
     protected function casts(): array
     {
         return [
-            'price' => 'integer',
-            'compare_at_price' => 'integer',
-            'weight_grams' => 'integer',
-            'length_cm' => 'decimal:2',
-            'width_cm' => 'decimal:2',
-            'height_cm' => 'decimal:2',
-            'stock' => 'integer',
             'sold_count' => 'integer',
             'highlights' => 'array',
             'is_featured' => 'boolean',
             'published_at' => 'datetime',
         ];
+    }
+
+    /**
+     * Varian default (acuan harga/berat/dimensi untuk tampilan ringkas produk).
+     * Pakai relasi yang sudah di-load bila ada supaya tidak N+1.
+     */
+    public function defaultVariant(): ?ProductVariant
+    {
+        $variants = $this->relationLoaded('variants') ? $this->variants : $this->variants()->get();
+
+        return $variants->firstWhere('is_default', true) ?? $variants->first();
+    }
+
+    // ---- Atribut turunan dari VARIAN (kolom product price/stock/berat/dimensi sudah
+    // dihapus; sumber kebenaran = ProductVariant). Reads $product->price/->stock/dll
+    // tetap berfungsi lewat accessor ini.
+
+    public function getPriceAttribute(): int
+    {
+        return (int) ($this->defaultVariant()?->price ?? 0);
+    }
+
+    public function getCompareAtPriceAttribute(): ?int
+    {
+        $value = $this->defaultVariant()?->compare_at_price;
+
+        return $value !== null ? (int) $value : null;
+    }
+
+    public function getWeightLabelAttribute(): ?string
+    {
+        return $this->defaultVariant()?->label;
+    }
+
+    public function getWeightGramsAttribute(): ?int
+    {
+        $value = $this->defaultVariant()?->weight_grams;
+
+        return $value !== null ? (int) $value : null;
+    }
+
+    public function getLengthCmAttribute()
+    {
+        return $this->defaultVariant()?->length_cm;
+    }
+
+    public function getWidthCmAttribute()
+    {
+        return $this->defaultVariant()?->width_cm;
+    }
+
+    public function getHeightCmAttribute()
+    {
+        return $this->defaultVariant()?->height_cm;
+    }
+
+    /** Stok produk = jumlah stok seluruh varian aktif (live, bukan kolom). */
+    public function getStockAttribute(): int
+    {
+        $variants = $this->relationLoaded('variants') ? $this->variants : $this->variants()->get();
+
+        return (int) $variants->where('is_active', true)->sum('stock');
+    }
+
+    /**
+     * Produk "tersedia" = punya minimal satu varian aktif yang masih ada stok.
+     * Dipakai untuk filter katalog (basis ketersediaan = varian, bukan kolom product).
+     */
+    public function scopeAvailable($query)
+    {
+        return $query->whereHas('variants', fn ($q) => $q->where('is_active', true)->where('stock', '>', 0));
     }
 
     public function category(): BelongsTo

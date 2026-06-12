@@ -12,6 +12,7 @@ use App\Models\ShipmentOrigin;
 use App\Models\UserUniqueCode;
 use App\Support\ApiData;
 use App\Support\ShippingService;
+use App\Support\StockService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
@@ -182,6 +183,10 @@ class OrderController extends Controller
                 ]);
             }
 
+            // Potong stok (reserve). Kalau ada item yang stoknya kurang, throw →
+            // seluruh transaksi (termasuk pembuatan order) ter-rollback.
+            app(StockService::class)->reserveForOrder($order);
+
             $order->logTracking('created', 'app');
 
             if ($usedUniqueCode > 0) {
@@ -219,31 +224,66 @@ class OrderController extends Controller
 
         abort_if($order === null, 404);
 
-        if ($order->status !== 'pending_payment') {
+        // Gate utama: kalau resi (AWB) sudah terbit = sudah di-request pickup ke kurir,
+        // pesanan tidak bisa dibatalkan dari sisi customer.
+        if (trim((string) $order->awb) !== '') {
             throw ValidationException::withMessages([
-                'order' => 'Pesanan ini sudah tidak bisa dibatalkan dari sisi customer.',
+                'order' => 'Pesanan sudah diproses kurir (resi sudah terbit) dan tidak bisa dibatalkan. Hubungi admin bila ada kendala.',
             ]);
         }
 
-        DB::transaction(function () use ($order): void {
-            UserUniqueCode::query()
-                ->where('user_id', $order->user_id)
-                ->where('ref_id', $order->id)
-                ->whereIn('type', ['paid', 'used'])
-                ->delete();
+        // 1) pending_payment -> batal LANGSUNG (belum ada pembayaran).
+        if ($order->status === 'pending_payment') {
+            DB::transaction(function () use ($order): void {
+                UserUniqueCode::query()
+                    ->where('user_id', $order->user_id)
+                    ->where('ref_id', $order->id)
+                    ->whereIn('type', ['paid', 'used'])
+                    ->delete();
+
+                // Kembalikan stok yang sempat dipotong saat order dibuat.
+                app(StockService::class)->releaseForOrder($order);
+
+                $order->update([
+                    'status' => 'cancelled',
+                    'payment_status' => 'Dibatalkan customer',
+                    'shipment_note' => 'Order dibatalkan oleh customer sebelum pembayaran diverifikasi.',
+                    'cancel_requested_at' => null,
+                ]);
+            });
+
+            $order->refresh()->load(['items', 'user']);
+
+            return response()->json([
+                'data' => ApiData::order($order),
+                'message' => 'Order berhasil dibatalkan.',
+            ]);
+        }
+
+        // 2) paid / processing (AWB masih kosong) -> AJUKAN pembatalan, tunggu admin.
+        if (in_array($order->status, ['paid', 'processing'], true)) {
+            if ($order->cancel_requested_at !== null) {
+                throw ValidationException::withMessages([
+                    'order' => 'Permintaan pembatalan sudah dikirim dan sedang menunggu konfirmasi admin.',
+                ]);
+            }
 
             $order->update([
-                'status' => 'cancelled',
-                'payment_status' => 'Dibatalkan customer',
-                'shipment_note' => 'Order dibatalkan oleh customer sebelum pembayaran diverifikasi.',
+                'cancel_requested_at' => now(),
+                'shipment_note' => 'Customer mengajukan pembatalan. Menunggu konfirmasi admin.',
             ]);
-        });
 
-        $order->refresh()->load(['items', 'user']);
+            $order->refresh()->load(['items', 'user']);
 
-        return response()->json([
-            'data' => ApiData::order($order),
-            'message' => 'Order berhasil dibatalkan.',
+            return response()->json([
+                'data' => ApiData::order($order),
+                'message' => 'Permintaan pembatalan dikirim. Menunggu konfirmasi admin.',
+            ]);
+        }
+
+        // 3) shipped / completed / cancelled -> tidak bisa.
+        throw ValidationException::withMessages([
+            'order' => 'Pesanan ini sudah tidak bisa dibatalkan.',
         ]);
     }
 

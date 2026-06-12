@@ -12,8 +12,8 @@ class ShipmentOriginSeeder extends Seeder
         DB::table('shipment_origins')->insert([
             [
                 'id' => 1,
-                'label' => 'Gudang Utama Malang',
-                'contact_name' => 'Tim Gudang Larashop',
+                'label' => 'Akar Tani Kimia',
+                'contact_name' => 'Akar Tani Kimia',
                 'contact_phone' => '0341123456',
                 'origin_id' => 47246,
                 'selected_courier' => 'jnt',

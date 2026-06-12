@@ -65,10 +65,14 @@ class AdminOrderController extends Controller
                 ->whereIn('type', ['paid', 'used'])
                 ->delete();
 
+            // Kembalikan stok yang sempat dipotong saat order dibuat.
+            app(\App\Support\StockService::class)->releaseForOrder($order);
+
             $order->update([
                 'status' => 'cancelled',
                 'payment_status' => 'Dibatalkan admin',
                 'shipment_note' => 'Order dibatalkan oleh admin dan seluruh penyesuaian saldo sudah dikembalikan.',
+                'cancel_requested_at' => null,
             ]);
         });
 
@@ -79,6 +83,28 @@ class AdminOrderController extends Controller
         return response()->json([
             'data' => ApiData::order($order),
             'message' => 'Order berhasil dibatalkan oleh admin.',
+        ]);
+    }
+
+    /** Tolak permintaan pembatalan customer (order tetap berjalan, flag dihapus). */
+    public function rejectCancellation(Order $order): JsonResponse
+    {
+        if ($order->cancel_requested_at === null) {
+            throw ValidationException::withMessages([
+                'order' => 'Order ini tidak punya permintaan pembatalan.',
+            ]);
+        }
+
+        $order->update([
+            'cancel_requested_at' => null,
+            'shipment_note' => 'Permintaan pembatalan ditolak admin. Pesanan tetap diproses.',
+        ]);
+
+        $order->refresh()->load(['items', 'user']);
+
+        return response()->json([
+            'data' => ApiData::order($order),
+            'message' => 'Permintaan pembatalan ditolak. Pesanan tetap berjalan.',
         ]);
     }
 

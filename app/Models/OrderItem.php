@@ -20,6 +20,7 @@ class OrderItem extends Model
         'weight_grams',
         'price',
         'quantity',
+        'reserved_qty',
         'subtotal',
         'is_selected',
     ];
@@ -31,6 +32,7 @@ class OrderItem extends Model
             'weight_grams' => 'integer',
             'price' => 'integer',
             'quantity' => 'integer',
+            'reserved_qty' => 'integer',
             'subtotal' => 'integer',
             'is_selected' => 'boolean',
         ];

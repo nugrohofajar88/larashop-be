@@ -26,14 +26,7 @@ return new class extends Migration
             $table->string('name');
             $table->string('short_description')->nullable();
             $table->text('description');
-            $table->unsignedBigInteger('price');
-            $table->unsignedBigInteger('compare_at_price')->nullable();
-            $table->string('weight_label')->nullable();
-            $table->unsignedInteger('weight_grams')->nullable();
-            $table->decimal('length_cm', 8, 2)->nullable();
-            $table->decimal('width_cm', 8, 2)->nullable();
-            $table->decimal('height_cm', 8, 2)->nullable();
-            $table->unsignedInteger('stock')->default(0);
+            // Harga/stok/berat/dimensi TIDAK disimpan di products — sumbernya ProductVariant.
             $table->enum('public_status', ['draft', 'active', 'inactive', 'preorder'])->default('draft');
             $table->enum('catalog_status', ['available', 'limited', 'preorder', 'sold_out'])->default('available');
             $table->string('badge_label')->nullable();

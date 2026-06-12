@@ -351,7 +351,16 @@ class WaOrderService
             return $this->buildConfirmation($session);
         }
 
-        $order = $this->createOrder($phone, $session);
+        try {
+            $order = $this->createOrder($phone, $session);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            // Stok tidak cukup (mis. keburu habis dipesan orang lain). Jangan hapus
+            // sesi supaya customer bisa ubah qty/produk lalu konfirmasi ulang.
+            $msg = collect($e->errors())->flatten()->implode(' ');
+
+            return "⚠️ ".($msg !== '' ? $msg : 'Stok tidak mencukupi untuk pesanan ini.')."\n\nSilakan kurangi jumlah atau ganti produk, lalu ketik *ya* lagi.";
+        }
+
         $this->forget($phone);
 
         // Metode pembayaran yang ditawarkan diatur admin (Pengaturan Pembayaran).
@@ -669,6 +678,10 @@ class WaOrderService
             // Hanya dibuat saat admin memvalidasi pembayaran
             // (AdminOrderController::validatePayment) supaya order yang masih
             // pending_payment tidak menambah saldo kode unik yang bisa dipakai.
+
+            // Potong stok (reserve). Kalau kurang → throw, transaksi rollback,
+            // ditangkap di pemanggil untuk dibalas pesan ramah.
+            app(\App\Support\StockService::class)->reserveForOrder($order);
 
             $order->logTracking('created', 'app');
 
