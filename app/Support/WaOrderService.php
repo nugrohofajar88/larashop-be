@@ -362,22 +362,23 @@ class WaOrderService
             $transferOn = true; // pengaman: jangan sampai tak ada metode bayar.
         }
 
-        // Pembayaran QRIS: generate QRIS + kirim gambar QR (caption juga muat link).
+        // Pembayaran QRIS: generate QRIS + kirim gambar QR.
         if ($qrisOn) {
             $res = $this->qrisly->generateForOrder($order);
             if (($res['ok'] ?? false)) {
                 $imageUrl = $this->qrisly->qrImagePublicUrl($order->fresh());
                 if ($imageUrl !== '') {
                     $amountText = $this->money((int) $res['final_amount']);
-                    $this->wablas->sendMessage($phone, $this->orderConfirmationQris($order, (int) $res['final_amount'], $transferOn));
 
-                    // Caption SELALU menyertakan link QR. Di gateway/plan yang tak
-                    // mendukung attachment (mis. Fonnte FREE) gambar di-drop tapi
-                    // caption (berisi link) tetap terkirim sebagai teks → pelanggan
-                    // tetap bisa buka QR-nya. Di plan ber-attachment, gambar muncul.
-                    $caption = '📷 Scan QR untuk bayar *'.$amountText.'* (berlaku 15 menit, lunas otomatis).'
-                        ."\n\nKalau gambar QR tidak muncul, buka link ini:\n".$imageUrl;
-                    $this->wablas->sendImage($phone, $imageUrl, $caption);
+                    // Link QR DIMASUKKAN ke pesan TEKS (sendMessage) — andal di SEMUA
+                    // gateway. Penting: di Wablas, sendImage bisa GAGAL dan ikut menelan
+                    // caption-nya (link hilang); pesan teks biasa selalu sampai. Di Fonnte
+                    // FREE gambar di-drop tapi teks tetap sampai. Jadi link aman di teks.
+                    $this->wablas->sendMessage($phone, $this->orderConfirmationQris($order, (int) $res['final_amount'], $transferOn, $imageUrl));
+
+                    // Bonus: kirim gambar QR (muncul inline di gateway yang mendukung).
+                    // Kalau gagal/di-drop, link sudah ada di pesan teks di atas.
+                    $this->wablas->sendImage($phone, $imageUrl, '📷 Scan QR untuk bayar *'.$amountText.'*.');
 
                     return '';
                 }
@@ -707,7 +708,7 @@ class WaOrderService
             ."Admin akan memvalidasi pembayaranmu. 🙏";
     }
 
-    protected function orderConfirmationQris(Order $order, int $finalAmount, bool $includeTransfer = false): string
+    protected function orderConfirmationQris(Order $order, int $finalAmount, bool $includeTransfer = false, string $qrUrl = ''): string
     {
         $lines = $order->items->map(
             fn ($i): string => "• {$i->quantity}x {$i->product_name}".
@@ -735,8 +736,9 @@ class WaOrderService
             ."Ongkir: ".$this->money((int) $order->shipping_total)."\n"
             ."*Total bayar: ".$this->money($finalAmount)."*\n\n"
             ."💳 *Pembayaran via QRIS* — scan QR yang dikirim berikut ini. "
-            ."Nominal sudah otomatis sesuai total, jadi tinggal scan & bayar. "
-            ."Begitu lunas, pesanan langsung diproses. 🙏"
+            ."Nominal sudah otomatis sesuai total, jadi tinggal scan & bayar."
+            .($qrUrl !== '' ? "\n\n🔗 Buka/simpan QR di sini:\n".$qrUrl : '')
+            ."\n\nBegitu lunas, pesanan langsung diproses. 🙏"
             .$transferText;
     }
 

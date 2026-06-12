@@ -408,6 +408,7 @@ class ApiData
                 'estimate' => $order->shipping_estimate_days,
                 'address' => $order->address_snapshot,
                 'awb' => $order->awb,
+                'komerce_order_no' => $order->komerce_order_no,
                 'note' => $order->shipment_note,
             ],
             // Riwayat status (timeline). Hanya kalau relasi sengaja di-load (detail),
