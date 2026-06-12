@@ -249,25 +249,48 @@ class AdminOrderController extends Controller
             ]);
         }
 
-        // Batas keras: Komerce print-label lambat + ada Connection Timeout web server.
-        // >5 order beresiko request diputus server. Dibatasi 5 per cetak.
-        $maxLabels = 5;
+        // Batas wajar untuk satu call gabungan (panjang URL + waktu generate server).
+        $maxLabels = 20;
         if ($orders->count() > $maxLabels) {
             throw ValidationException::withMessages([
                 'order_codes' => 'Maksimal '.$maxLabels.' label per cetak (kamu pilih '.$orders->count().' order ber-label). Kurangi dulu pilihannya.',
             ]);
         }
 
-        // Longgarkan batas eksekusi PHP; tetap dibatasi Connection Timeout web server.
         @set_time_limit(0);
 
         $svc = app(KomerceShipmentService::class);
+        $orderNos = $orders->pluck('komerce_order_no')->map(fn ($n) => (string) $n)->all();
+        $expected = count($orderNos);
 
-        // Ambil semua label PARALEL (bukan satu-per-satu) supaya total cepat dan
-        // tidak kena Request Timeout server. Hasil dipetakan per komerce_order_no.
-        $labels = $svc->printLabelsConcurrent(
-            $orders->pluck('komerce_order_no')->map(fn ($n) => (string) $n)->all()
-        );
+        // Jalur utama: SATU call gabungan (order_no dipisah koma). Komerce kembalikan
+        // PDF berisi semua label (1 label = 1 halaman). Verifikasi via FPDI: kalau
+        // jumlah halaman >= jumlah order, berarti lengkap dan langsung dikirim.
+        $combined = $svc->printLabelCombined($orderNos);
+        if (($combined['ok'] ?? false) && ! empty($combined['pdf'])) {
+            try {
+                $probe = new \setasign\Fpdi\Fpdi();
+                $pages = $probe->setSourceFile(\setasign\Fpdi\PdfParser\StreamReader::createByString($combined['pdf']));
+            } catch (\Throwable $e) {
+                $pages = 0;
+            }
+
+            if ($pages >= $expected) {
+                return response((string) $combined['pdf'], 200, [
+                    'Content-Type' => 'application/pdf',
+                    'Content-Disposition' => 'inline; filename="labels-'.$expected.'.pdf"',
+                ]);
+            }
+
+            \Illuminate\Support\Facades\Log::warning('komerce.print_label.combined_incomplete', [
+                'orders' => $expected,
+                'pages' => $pages,
+            ]);
+        }
+
+        // Fallback: kalau call gabungan gagal/tidak lengkap, ambil per-order PARALEL
+        // lalu gabung sendiri via FPDI. Hasil dipetakan per komerce_order_no.
+        $labels = $svc->printLabelsConcurrent($orderNos);
 
         $merger = new \setasign\Fpdi\Fpdi();
         $added = 0;

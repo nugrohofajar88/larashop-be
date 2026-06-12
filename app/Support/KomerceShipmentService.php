@@ -235,6 +235,41 @@ class KomerceShipmentService
     }
 
     /**
+     * Cetak BANYAK label dalam SATU call — order_no dipisah koma (didukung Komerce).
+     * Mengembalikan satu PDF gabungan (1 label = 1 halaman). Jauh lebih ringan
+     * daripada N call, jadi tidak kena Connection Timeout web server.
+     *
+     * @param  array<int,string>  $orderNos
+     * @return array{ok:bool,pdf?:string,filename?:string,message?:string}
+     */
+    public function printLabelCombined(array $orderNos, string $page = 'page_6'): array
+    {
+        $orderNos = array_values(array_unique(array_filter(array_map('trim', $orderNos))));
+        if ($orderNos === []) {
+            return ['ok' => false, 'message' => 'Tidak ada order_no.'];
+        }
+
+        // order_no Komerce alfanumerik, jadi rawurlencode tak mengubah; gabung pakai
+        // koma LITERAL (jangan urlencode keseluruhan, nanti komanya jadi %2C).
+        $joined = implode(',', array_map('rawurlencode', $orderNos));
+
+        try {
+            $response = Http::acceptJson()
+                ->withHeaders(['x-api-key' => (string) config('services.komerce_delivery.api_key')])
+                ->baseUrl(rtrim((string) config('services.komerce_delivery.base_url'), '/'))
+                ->connectTimeout(10)
+                ->timeout(60)
+                ->post('/order/api/v1/orders/print-label?page='.urlencode($page).'&order_no='.$joined);
+        } catch (\Throwable $e) {
+            Log::error('komerce.print_label_combined.exception', ['count' => count($orderNos), 'error' => $e->getMessage()]);
+
+            return ['ok' => false, 'message' => $e->getMessage()];
+        }
+
+        return $this->parseLabelResponse('bulk('.count($orderNos).')', $response);
+    }
+
+    /**
      * Ambil BANYAK label sekaligus secara PARALEL (Http::pool) lalu kembalikan
      * hasil per order_no. Jauh lebih cepat daripada loop berurutan — penting
      * supaya total waktu muat di bawah Connection Timeout web server.
