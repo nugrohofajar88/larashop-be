@@ -265,9 +265,18 @@ class AdminOrderController extends Controller
         $failed = [];
 
         foreach ($orders as $order) {
-            $res = $labels[(string) $order->komerce_order_no] ?? null;
+            $no = (string) $order->komerce_order_no;
+            $res = $labels[$no] ?? null;
+
+            // Fallback: kalau versi paralel gagal (mis. Komerce menolak request
+            // bersamaan), coba sekali lagi berurutan via jalur single yang known-good.
             if (! is_array($res) || ! ($res['ok'] ?? false) || empty($res['pdf'])) {
-                $failed[] = $order->code;
+                @set_time_limit(60);
+                $res = $svc->printLabel($no);
+            }
+
+            if (! ($res['ok'] ?? false) || empty($res['pdf'])) {
+                $failed[$order->code] = (string) ($res['message'] ?? 'tidak diketahui');
 
                 continue;
             }
@@ -282,13 +291,17 @@ class AdminOrderController extends Controller
                 }
                 $added++;
             } catch (\Throwable $e) {
-                $failed[] = $order->code;
+                $failed[$order->code] = 'gabung PDF gagal: '.$e->getMessage();
             }
         }
 
         if ($added === 0) {
+            $detail = collect($failed)
+                ->map(fn (string $msg, string $code): string => $code.' ('.$msg.')')
+                ->implode('; ');
+
             throw ValidationException::withMessages([
-                'order_codes' => 'Gagal mengambil label semua order'.($failed !== [] ? ': '.implode(', ', $failed) : '').'.',
+                'order_codes' => 'Gagal mengambil label: '.($detail !== '' ? $detail : 'tidak ada order valid').'.',
             ]);
         }
 
