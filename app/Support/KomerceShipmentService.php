@@ -222,6 +222,8 @@ class KomerceShipmentService
             $response = Http::acceptJson()
                 ->withHeaders(['x-api-key' => (string) config('services.komerce_delivery.api_key')])
                 ->baseUrl(rtrim((string) config('services.komerce_delivery.base_url'), '/'))
+                ->connectTimeout(10)
+                ->timeout(20)
                 ->post('/order/api/v1/orders/print-label?page='.urlencode($page).'&order_no='.urlencode($orderNo));
         } catch (\Throwable $e) {
             Log::error('komerce.print_label.exception', ['order_no' => $orderNo, 'error' => $e->getMessage()]);

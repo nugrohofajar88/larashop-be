@@ -249,12 +249,17 @@ class AdminOrderController extends Controller
             ]);
         }
 
+        // Tiap order = 1 call Komerce (≤20s). Untuk banyak order, longgarkan batas
+        // eksekusi PHP supaya tidak terbunuh di tengah loop.
+        @set_time_limit(0);
+
         $svc = app(KomerceShipmentService::class);
         $merger = new \setasign\Fpdi\Fpdi();
         $added = 0;
         $failed = [];
 
         foreach ($orders as $order) {
+            @set_time_limit(60);
             $res = $svc->printLabel((string) $order->komerce_order_no);
             if (! ($res['ok'] ?? false) || empty($res['pdf'])) {
                 $failed[] = $order->code;
