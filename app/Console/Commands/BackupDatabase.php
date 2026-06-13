@@ -15,7 +15,7 @@ class BackupDatabase extends Command
     public function handle(): int
     {
         $db = config('database.connections.'.config('database.default'));
-        $filename = 'db/larashop-'.now()->format('Y-m-d_His').'.sql.gz';
+        $filename = 'db/'.$db['database'].'-'.now()->format('Y-m-d_His').'.sql.gz';
         $tmp = storage_path('app/'.basename($filename));
 
         // 1) Dump pure-PHP (PDO) + gzip — aman di host yang membatasi fungsi shell.
