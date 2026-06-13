@@ -123,7 +123,8 @@ class AdminShipmentController extends Controller
 
     public function show(string $code): JsonResponse
     {
-        $orderCode = str_starts_with($code, 'SHP-ORD-') ? substr($code, 4) : $code;
+        // Kode shipment = 'SHP-' + kode order. Strip prefix apa pun kode ordernya (ORD-/ATK).
+        $orderCode = str_starts_with($code, 'SHP-') ? substr($code, 4) : $code;
         $order = Order::query()
             ->with('user')
             ->where('code', $orderCode)

@@ -83,6 +83,7 @@ Route::prefix('v1')->middleware('throttle:api')->group(function (): void {
         Route::put('/products/{product}', [AdminProductController::class, 'update']);
         Route::delete('/products/{product}', [AdminProductController::class, 'destroy']);
         Route::get('/customers', [AdminCustomerController::class, 'index']);
+        Route::post('/customers/bulk-delete', [AdminCustomerController::class, 'bulkDestroy']);
         Route::post('/customers', [AdminCustomerController::class, 'store']);
         Route::get('/customers/{customer}', [AdminCustomerController::class, 'show']);
         Route::put('/customers/{customer}', [AdminCustomerController::class, 'update']);

@@ -271,6 +271,8 @@ class ApiData
             'phone' => $user->phone,
             'status' => self::customerStatusLabel($user->status),
             'role' => $user->role,
+            'admin_role' => $user->admin_role,
+            'is_super_admin' => $user->role === 'admin' && $user->admin_role === 'super_admin',
             'unique_code_balance' => self::rupiah($uniqueCodeBalance),
             'unique_code_balance_value' => $uniqueCodeBalance,
         ];

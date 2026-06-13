@@ -307,7 +307,7 @@ class WaBotService
 
         if ($order === null) {
             return "🙏 Terima kasih infonya! Tapi kami belum menemukan pesanan yang menunggu pembayaran atas nomor ini.\n\n"
-                ."Kalau kamu baru transfer untuk pesanan tertentu, balas dengan *kode pesanannya* (mis. ORD-001). "
+                ."Kalau kamu baru transfer untuk pesanan tertentu, balas dengan *kode pesanannya* (mis. ATK2026061300001). "
                 ."Atau ketik */pesan* untuk memesan.";
         }
 

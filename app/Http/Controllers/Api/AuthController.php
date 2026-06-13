@@ -34,7 +34,7 @@ class AuthController extends Controller
         }
 
         if ($user->status !== 'active') {
-            abort(403, 'Akun belum aktif.');
+            abort(403, 'Akun tidak aktif. Silakan hubungi admin.');
         }
 
         $token = $user->createToken(

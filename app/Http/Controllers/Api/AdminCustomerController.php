@@ -11,6 +11,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Rules\Password;
+use Illuminate\Validation\ValidationException;
 
 class AdminCustomerController extends Controller
 {
@@ -114,10 +115,67 @@ class AdminCustomerController extends Controller
     {
         abort_unless($customer->role === 'customer', 404);
 
-        $customer->delete();
+        // Punya pesanan nyata (selain draft/cart) → tidak boleh dihapus; riwayat dijaga.
+        $orderCount = $customer->orders()->where('status', '!=', 'draft')->count();
+        if ($orderCount > 0) {
+            throw ValidationException::withMessages([
+                'customer' => 'Customer tidak bisa dihapus karena sudah punya '.$orderCount.' pesanan. Nonaktifkan akunnya bila perlu.',
+            ]);
+        }
+
+        DB::transaction(function () use ($customer): void {
+            // Hapus draft/cart dulu (order_items & trackings ikut cascade) agar FK
+            // restrict pada orders tidak menghalangi penghapusan user. Alamat & kode
+            // unik customer cascade otomatis saat user dihapus.
+            $customer->orders()->where('status', 'draft')->delete();
+            $customer->delete();
+        });
 
         return response()->json([
             'message' => 'Customer berhasil dihapus.',
+        ]);
+    }
+
+    /**
+     * Hapus/nonaktifkan BANYAK customer sekaligus.
+     * - Tanpa pesanan (selain draft) → dihapus permanen.
+     * - Punya pesanan → otomatis di-set status 'inactive' (riwayat dijaga).
+     */
+    public function bulkDestroy(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'customer_codes' => ['required', 'array', 'min:1'],
+            'customer_codes.*' => ['string'],
+        ]);
+
+        $customers = User::query()
+            ->where('role', 'customer')
+            ->whereIn('code', $validated['customer_codes'])
+            ->get();
+
+        $deleted = [];
+        $deactivated = [];
+
+        foreach ($customers as $customer) {
+            if ($customer->orders()->where('status', '!=', 'draft')->exists()) {
+                if ($customer->status !== 'inactive') {
+                    $customer->update(['status' => 'inactive']);
+                }
+                $deactivated[] = $customer->code;
+
+                continue;
+            }
+
+            DB::transaction(function () use ($customer): void {
+                $customer->orders()->where('status', 'draft')->delete();
+                $customer->delete();
+            });
+            $deleted[] = $customer->code;
+        }
+
+        return response()->json([
+            'data' => ['deleted' => $deleted, 'deactivated' => $deactivated],
+            'message' => count($deleted).' customer dihapus, '.count($deactivated).' dinonaktifkan (karena punya pesanan).',
         ]);
     }
 
@@ -207,6 +265,9 @@ class AdminCustomerController extends Controller
             'addresses.*.district' => ['required_with:addresses', 'string', 'max:100'],
             'addresses.*.subdistrict' => ['required_with:addresses', 'string', 'max:100'],
             'addresses.*.postal_code' => ['required_with:addresses', 'string', 'max:10'],
+            'addresses.*.destination_id' => ['nullable', 'integer'],
+            'addresses.*.latitude' => ['nullable', 'numeric', 'between:-90,90'],
+            'addresses.*.longitude' => ['nullable', 'numeric', 'between:-180,180'],
             'addresses.*.address_line' => ['required_with:addresses', 'string'],
             'addresses.*.note' => ['nullable', 'string', 'max:255'],
             'addresses.*.is_primary' => ['nullable', 'boolean'],
@@ -224,6 +285,7 @@ class AdminCustomerController extends Controller
             'district' => ['required', 'string', 'max:100'],
             'subdistrict' => ['required', 'string', 'max:100'],
             'postal_code' => ['required', 'string', 'max:10'],
+            'destination_id' => ['nullable', 'integer'],
             'address_line' => ['required', 'string'],
             'note' => ['nullable', 'string', 'max:255'],
             'latitude' => ['nullable', 'numeric', 'between:-90,90'],

@@ -51,6 +51,8 @@ class AdminAccountController extends Controller
 
     public function store(Request $request): JsonResponse
     {
+        $this->ensureSuperAdmin($request->user());
+
         $validated = $this->validateAccount($request);
         $nextNumber = str_pad((string) ((User::query()->where('role', 'admin')->count()) + 1), 3, '0', STR_PAD_LEFT);
 
@@ -73,17 +75,30 @@ class AdminAccountController extends Controller
 
     public function update(Request $request, User $account): JsonResponse
     {
-        $this->authorizeTargetAccount($request->user(), $account);
+        $actor = $request->user();
+        $isSuper = $actor->isSuperAdmin();
+        $isSelf = $actor->is($account);
 
-        $validated = $this->validateAccount($request, $account);
+        // Non-super hanya boleh mengubah profil DIRINYA SENDIRI.
+        abort_unless($isSuper || $isSelf, 403, 'Kamu hanya bisa mengubah profil sendiri.');
+
+        if ($isSuper) {
+            $this->authorizeTargetAccount($actor, $account);
+        }
+
+        // Role & status hanya boleh diubah super admin (cegah self-escalation).
+        $validated = $this->validateAccount($request, $account, $isSuper);
         $payload = [
             'name' => $validated['name'],
             'username' => $validated['username'],
             'email' => $validated['email'],
             'phone' => $validated['phone'],
-            'admin_role' => $validated['admin_role'],
-            'status' => $validated['status'],
         ];
+
+        if ($isSuper) {
+            $payload['admin_role'] = $validated['admin_role'];
+            $payload['status'] = $validated['status'];
+        }
 
         if (! empty($validated['password'])) {
             $payload['password'] = $validated['password'];
@@ -98,6 +113,7 @@ class AdminAccountController extends Controller
 
     public function destroy(Request $request, User $account): JsonResponse
     {
+        $this->ensureSuperAdmin($request->user());
         $this->authorizeTargetAccount($request->user(), $account);
 
         if ($request->user()->is($account)) {
@@ -113,17 +129,29 @@ class AdminAccountController extends Controller
         ]);
     }
 
-    protected function validateAccount(Request $request, ?User $account = null): array
+    protected function validateAccount(Request $request, ?User $account = null, bool $withRole = true): array
     {
-        return $request->validate([
+        $rules = [
             'name' => ['required', 'string', 'max:255'],
             'username' => ['required', 'string', 'max:255', 'alpha_dash', Rule::unique('users', 'username')->ignore($account?->id)],
             'email' => ['required', 'email', 'max:255', Rule::unique('users', 'email')->ignore($account?->id)],
             'phone' => ['required', 'string', 'max:20', Rule::unique('users', 'phone')->ignore($account?->id)],
-            'admin_role' => ['required', Rule::in(['super_admin', 'operational_admin', 'warehouse_admin'])],
-            'status' => ['required', Rule::in(['active', 'inactive'])],
             'password' => [$account ? 'nullable' : 'required', 'confirmed', Password::min(8)->letters()->numbers()],
-        ]);
+        ];
+
+        // Role & status hanya divalidasi saat super admin yang mengubah.
+        if ($withRole) {
+            $rules['admin_role'] = ['required', Rule::in(['super_admin', 'operational_admin', 'warehouse_admin'])];
+            $rules['status'] = ['required', Rule::in(['active', 'inactive'])];
+        }
+
+        return $request->validate($rules);
+    }
+
+    /** Hanya super admin yang boleh menambah/ubah/hapus akun admin. */
+    protected function ensureSuperAdmin(User $actor): void
+    {
+        abort_unless($actor->isSuperAdmin(), 403, 'Hanya super admin yang dapat mengelola akun admin.');
     }
 
     protected function authorizeTargetAccount(User $actor, User $target): void

@@ -805,11 +805,18 @@ class WaOrderService
 
     protected function generateOrderCode(): string
     {
-        $next = ((int) Order::query()->where('status', '!=', 'draft')->count()) + 1;
+        // Format: ATK + tanggal (YYYYMMDD) + nomor urut 5 digit dalam bulan berjalan.
+        // Contoh order ke-1 pada 13 Juni 2026: ATK2026061300001. (WIB; app timezone Asia/Jakarta)
+        $now = now();
+        $datePart = $now->format('Ymd');
+        $seq = ((int) Order::query()
+            ->where('status', '!=', 'draft')
+            ->whereBetween('created_at', [$now->copy()->startOfMonth(), $now->copy()->endOfMonth()])
+            ->count()) + 1;
 
         do {
-            $code = 'ORD-'.str_pad((string) $next, 3, '0', STR_PAD_LEFT);
-            $next++;
+            $code = 'ATK'.$datePart.str_pad((string) $seq, 5, '0', STR_PAD_LEFT);
+            $seq++;
         } while (Order::query()->where('code', $code)->exists());
 
         return $code;
