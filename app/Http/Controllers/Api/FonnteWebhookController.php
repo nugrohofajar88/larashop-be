@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Support\WaBotService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 
 /**
@@ -44,6 +45,23 @@ class FonnteWebhookController extends Controller
         // Abaikan pesan grup atau tanpa pengirim. Balas 200 supaya Fonnte tak retry.
         if ($phone === '' || $isGroup) {
             return response()->json(['status' => 'ignored']);
+        }
+
+        // Dedup: Fonnte bisa mengirim webhook yang SAMA berkali-kali (retry saat balasan
+        // kita lambat — mis. generate QRIS + kirim pesan). Tanpa ini, pesan "ya" bisa
+        // diproses 2x → order dobel. Proses tiap pesan sekali saja (atomik via Cache::add).
+        $messageId = trim((string) ($payload['id'] ?? ''));
+        $dedupKey = 'fonnte:msg:'.($messageId !== ''
+            ? $messageId
+            : md5($phone.'|'.$message.'|'.$mediaUrl));
+
+        if (! Cache::add($dedupKey, 1, now()->addMinutes(3))) {
+            Log::channel('wablas')->info('fonnte.message.duplicate_skipped', [
+                'phone' => $phone,
+                'id' => $messageId !== '' ? $messageId : null,
+            ]);
+
+            return response()->json(['status' => 'duplicate']);
         }
 
         $bot = app(WaBotService::class);

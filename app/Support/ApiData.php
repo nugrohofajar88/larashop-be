@@ -457,6 +457,7 @@ class ApiData
             'id' => $order->id,
             'code' => 'SHP-'.$order->code,
             'order_code' => $order->code,
+            'komerce_order_no' => $order->komerce_order_no,
             'customer' => $order->user?->name,
             'courier' => $order->shipping_service_name,
             'awb' => $order->awb,
