@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 
 class WablasWebhookController extends Controller
@@ -113,6 +114,23 @@ class WablasWebhookController extends Controller
         ]);
 
         if ($phone === null) {
+            return;
+        }
+
+        // Dedup: Wablas bisa mengirim webhook yang SAMA berkali-kali (retry saat balasan
+        // kita lambat — mis. generate QRIS + kirim 2 pesan). Tanpa ini, pesan "ya" bisa
+        // diproses 2x → order dobel. Proses tiap pesan sekali saja (atomik via Cache::add).
+        $messageId = trim((string) ($payload['id'] ?? ''));
+        $dedupKey = 'wablas:msg:'.($messageId !== ''
+            ? $messageId
+            : md5($phone.'|'.$messageType.'|'.$message.'|'.$mediaUrl));
+
+        if (! Cache::add($dedupKey, 1, now()->addMinutes(3))) {
+            Log::channel('wablas')->info('wablas.message.duplicate_skipped', [
+                'phone' => $phone,
+                'id' => $messageId !== '' ? $messageId : null,
+            ]);
+
             return;
         }
 
