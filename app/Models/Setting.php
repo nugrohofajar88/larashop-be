@@ -33,9 +33,9 @@ class Setting extends Model
         return filter_var(static::get('payment_transfer_enabled', '1'), FILTER_VALIDATE_BOOLEAN);
     }
 
-    /** Metode pembayaran QRIS aktif (default aktif). */
+    /** Metode pembayaran QRIS aktif (default MATI; baru aktif setelah upload QRIS toko & dicentang). */
     public static function paymentQrisEnabled(): bool
     {
-        return filter_var(static::get('payment_qris_enabled', '1'), FILTER_VALIDATE_BOOLEAN);
+        return filter_var(static::get('payment_qris_enabled', '0'), FILTER_VALIDATE_BOOLEAN);
     }
 }

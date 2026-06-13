@@ -49,7 +49,8 @@ class SettingSeeder extends Seeder
             [
                 'id' => 6,
                 'key' => 'payment_qris_enabled',
-                'value' => '1',
+                // Default OFF: QRIS baru aktif setelah admin upload QRIS toko & mencentangnya.
+                'value' => '0',
                 'created_at' => '2026-06-12 00:00:00',
                 'updated_at' => '2026-06-12 00:00:00',
             ],

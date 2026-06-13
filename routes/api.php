@@ -16,6 +16,7 @@ use App\Http\Controllers\Api\CheckoutController;
 use App\Http\Controllers\Api\CustomerController;
 use App\Http\Controllers\Api\OrderController;
 use App\Http\Controllers\Api\ShippingController;
+use App\Http\Controllers\Api\StoreController;
 use App\Http\Controllers\Api\AdminQrisController;
 use App\Http\Controllers\Api\FonnteWebhookController;
 use App\Http\Controllers\Api\KomerceWebhookController;
@@ -35,6 +36,8 @@ Route::prefix('v1')->middleware('throttle:api')->group(function (): void {
         Route::post('/login', [AuthController::class, 'login'])->middleware('guest');
         Route::post('/register', [AuthController::class, 'register'])->middleware('guest');
     });
+
+    Route::get('/store-info', [StoreController::class, 'info']);
 
     Route::get('/products', [CatalogController::class, 'index']);
     Route::get('/products/{slug}', [CatalogController::class, 'show']);
