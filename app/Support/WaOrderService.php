@@ -615,7 +615,8 @@ class WaOrderService
         $shippingTotal = (int) ($shipping['price_value'] ?? 0);
         $grandTotal = max(0, $itemsTotal + $shippingTotal + $uniqueCode);
 
-        return DB::transaction(function () use (
+        // retry: lindungi dari race kode order (dua order WA bersamaan → kode sama).
+        return retry(5, fn () => DB::transaction(function () use (
             $phone, $name, $recipientPhone, $addressLine, $dest, $shipping, $items,
             $itemsTotal, $shippingTotal, $uniqueCode, $grandTotal
         ): Order {
@@ -686,7 +687,7 @@ class WaOrderService
             $order->logTracking('created', 'app');
 
             return $order->fresh('items');
-        });
+        }), 50, fn ($e) => $e instanceof \Illuminate\Database\QueryException && str_contains($e->getMessage(), 'orders_code_unique'));
     }
 
     protected function orderConfirmation(Order $order, array $session): string

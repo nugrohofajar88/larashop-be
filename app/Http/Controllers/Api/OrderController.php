@@ -133,7 +133,9 @@ class OrderController extends Controller
             : 0;
         $grandTotal = max(0, $itemsTotal + $shippingTotal + $uniqueCode - $usedUniqueCode);
 
-        $order = DB::transaction(function () use (
+        // retry: lindungi dari race kode order (dua order bersamaan → kode sama).
+        // Kalau insert kena duplicate kode, ulang transaksi → generateOrderCode recount.
+        $order = retry(5, fn () => DB::transaction(function () use (
             $user,
             $address,
             $draftOrder,
@@ -205,7 +207,7 @@ class OrderController extends Controller
             $this->refreshDraftTotals($draftOrder);
 
             return $order->fresh(['items', 'user']);
-        });
+        }), 50, fn ($e) => $e instanceof \Illuminate\Database\QueryException && str_contains($e->getMessage(), 'orders_code_unique'));
 
         return response()->json([
             'data' => ApiData::order($order),
