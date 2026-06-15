@@ -276,6 +276,13 @@ class QrislyService
             }
         }
 
+        // Masking: kalau STOREFRONT_URL diset, link QR pakai domain storefront
+        // (/qr/{token}) yang mem-proxy gambar ini — domain backend tak terekspos.
+        $storefront = rtrim((string) config('services.storefront.url'), '/');
+        if ($storefront !== '') {
+            return $storefront.'/qr/'.$token;
+        }
+
         return rtrim((string) config('app.url'), '/').'/qris/'.$filename;
     }
 

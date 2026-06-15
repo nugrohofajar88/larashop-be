@@ -67,6 +67,12 @@ return [
         'volumetric_divisor' => (int) env('SHIPPING_VOLUMETRIC_DIVISOR', 6000),
     ],
 
+    // URL publik storefront (domain depan). Dipakai mis. untuk masking link gambar QR
+    // agar tidak menampilkan domain backend. Kosong = fallback ke domain backend.
+    'storefront' => [
+        'url' => env('STOREFRONT_URL', ''),
+    ],
+
     'gemini' => [
         'api_key' => env('GEMINI_API_KEY'),
         'model' => env('GEMINI_MODEL', 'gemini-3.1-flash-lite'),
