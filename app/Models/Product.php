@@ -123,6 +123,25 @@ class Product extends Model
         return $this->hasMany(ProductVariant::class)->orderBy('sort_order')->orderBy('id');
     }
 
+    public function orderItems(): HasMany
+    {
+        return $this->hasMany(OrderItem::class);
+    }
+
+    /** Status order yang dihitung sebagai "terjual". */
+    public const SOLD_STATUSES = ['paid', 'processing', 'shipped', 'completed'];
+
+    /** Scope: tambahkan kolom hitungan sold_total (Σ qty dari order yang sudah dibayar). */
+    public function scopeWithSoldTotal($query)
+    {
+        return $query->withSum([
+            'orderItems as sold_total' => fn ($q) => $q->whereHas(
+                'order',
+                fn ($o) => $o->whereIn('status', self::SOLD_STATUSES)
+            ),
+        ], 'quantity');
+    }
+
     /**
      * Filter produk yang cocok dengan kumpulan kata kunci.
      * Tiap kata dicocokkan (LIKE) ke nama, deskripsi singkat, deskripsi, atau nama kategori.

@@ -13,7 +13,7 @@ class CatalogController extends Controller
     public function index(Request $request): JsonResponse
     {
         $products = Product::query()
-            ->with(['category', 'images', 'variants'])
+            ->with(['category', 'images', 'variants'])->withSoldTotal()
             ->where('public_status', 'active')
             ->available();
         $search = trim($request->string('search')->toString());
@@ -87,7 +87,7 @@ class CatalogController extends Controller
     public function show(string $slug): JsonResponse
     {
         $product = Product::query()
-            ->with(['category', 'images', 'variants'])
+            ->with(['category', 'images', 'variants'])->withSoldTotal()
             ->where('public_status', 'active')
             ->available()
             ->where('slug', $slug)
@@ -96,7 +96,7 @@ class CatalogController extends Controller
         abort_if($product === null, 404);
 
         $relatedProducts = Product::query()
-            ->with(['category', 'images', 'variants'])
+            ->with(['category', 'images', 'variants'])->withSoldTotal()
             ->where('public_status', 'active')
             ->available()
             ->where('id', '!=', $product->id)
@@ -107,7 +107,7 @@ class CatalogController extends Controller
         if ($relatedProducts->count() < 3) {
             $existingIds = $relatedProducts->pluck('id')->push($product->id);
             $fallbackProducts = Product::query()
-                ->with(['category', 'images', 'variants'])
+                ->with(['category', 'images', 'variants'])->withSoldTotal()
                 ->where('public_status', 'active')
                 ->available()
                 ->whereNotIn('id', $existingIds)

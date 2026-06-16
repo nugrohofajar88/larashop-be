@@ -15,7 +15,7 @@ class AdminProductController extends Controller
 {
     public function index(Request $request): JsonResponse
     {
-        $products = Product::query()->with(['category', 'images', 'variants']);
+        $products = Product::query()->with(['category', 'images', 'variants'])->withSoldTotal();
         $search = trim($request->string('search')->toString());
 
         if ($search !== '') {
