@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(awk 'NR>=155 && NR<=168 {print NR\": \"$0}' resources/views/storefront/order-detail.blade.php)",
+      "Bash(/c/xampp/php/php.exe artisan *)",
+      "Bash(grep -n '@error\\\\|errors->\\\\|$errors\\\\|with\\('\\\\''error\\\\|session\\('\\\\''error' resources/views/storefront/checkout.blade.php)",
+      "Bash(grep -n \"use Illuminate\\\\\\\\\\\\\\\\Support\\\\\\\\\\\\\\\\Facades\\\\\\\\\\\\\\\\Cache\" app/Http/Controllers/AdminController.php)",
+      "Bash(/c/xampp/php/php.exe -l /c/xampp/htdocs/larashop-be/app/Models/Setting.php)",
+      "Bash(/c/xampp/php/php.exe -l app/Providers/AppServiceProvider.php)",
+      "Bash(/c/xampp/php/php.exe -l app/Console/Commands/BackupDatabase.php)",
+      "Bash(/c/xampp/php/php.exe -l app/Support/WaOrderService.php)",
+      "Bash(/c/xampp/php/php.exe -r 'require '\\\\''vendor/autoload.php'\\\\''; $app=require '\\\\''bootstrap/app.php'\\\\''; $app->make\\(Illuminate\\\\Contracts\\\\Console\\\\Kernel::class\\)->bootstrap\\(\\); \\\\App\\\\Models\\\\ProductVariant::query\\(\\)->limit\\(10\\)->get\\(['\\\\''id'\\\\'','\\\\''product_id'\\\\'','\\\\''sku'\\\\'','\\\\''price'\\\\'','\\\\''stock'\\\\'']\\)->each\\(function\\($v\\){ echo $v->id.'\\\\'' | '\\\\''.$v->sku.'\\\\'' | price='\\\\''.$v->price.'\\\\'' | stock='\\\\''.$v->stock.PHP_EOL; }\\);')"
+    ]
+  }
+}
