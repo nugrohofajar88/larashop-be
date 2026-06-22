@@ -385,6 +385,7 @@ class ApiData
             'total' => self::rupiah($order->grand_total),
             'total_value' => $order->grand_total,
             'customer' => $order->user?->name,
+            'customer_phone' => $order->user?->phone,
             'phone' => $order->recipient_phone,
             'payment_status' => $order->payment_status,
             'shipping_service' => $order->shipping_service_name,
