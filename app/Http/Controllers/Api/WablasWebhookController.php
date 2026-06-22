@@ -3,8 +3,10 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\Setting;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 
@@ -32,7 +34,7 @@ class WablasWebhookController extends Controller
 
         Log::channel('wablas')->info('wablas.webhook.received', [
             'event' => $event,
-            'payload' => $payload,
+            'payload' => Arr::except($payload, ['secret']),
         ]);
 
         match ($event) {
@@ -49,6 +51,14 @@ class WablasWebhookController extends Controller
      * request, jadi kita pakai shared secret via header atau query string.
      * Kalau WABLAS_WEBHOOK_SECRET kosong, request diterima (mode dev).
      */
+    /** Normalisasi nomor ke digit dengan awalan 62 (mis. "0857.." -> "62857..."). */
+    protected function normalizeNumber($raw): string
+    {
+        $digits = preg_replace('/\D/', '', (string) $raw) ?? '';
+
+        return $digits !== '' && str_starts_with($digits, '0') ? '62'.substr($digits, 1) : $digits;
+    }
+
     protected function isAuthorized(Request $request): bool
     {
         $secret = (string) config('services.wablas.webhook_secret');
@@ -98,10 +108,24 @@ class WablasWebhookController extends Controller
             return;
         }
 
-        // Balas ke PENGIRIM pesan. `sender` = nomor pengirim asli (customer);
-        // `phone` di sebagian versi Wablas = nomor DEVICE/toko, jadi `sender`
-        // diutamakan supaya balasan tak nyasar ke nomor toko sendiri.
-        $phone = $payload['sender'] ?? $payload['phone'] ?? null;
+        // Balas ke PELANGGAN. Wablas tidak konsisten menaruh nomor pelanggan di
+        // `phone` atau `sender` antar versi/device, jadi jangan andalkan nama field:
+        // pilih nomor yang BUKAN nomor WA toko. Kalau store_whatsapp belum di-set,
+        // fallback ke `phone` lalu `sender`.
+        $storeWa = $this->normalizeNumber(Setting::get('store_whatsapp', ''));
+        $candidates = array_values(array_unique(array_filter([
+            $this->normalizeNumber($payload['phone'] ?? ''),
+            $this->normalizeNumber($payload['sender'] ?? ''),
+        ])));
+
+        $phone = null;
+        foreach ($candidates as $candidate) {
+            if ($storeWa === '' || $candidate !== $storeWa) {
+                $phone = $candidate;
+                break;
+            }
+        }
+        $phone = $phone ?: ($candidates[0] ?? null);
         $message = trim((string) ($payload['message'] ?? ''));
         $messageType = strtolower((string) ($payload['messageType'] ?? 'text'));
         $mediaUrl = trim((string) ($payload['url'] ?? $payload['image'] ?? $payload['file'] ?? $payload['media'] ?? ''));
