@@ -134,6 +134,77 @@ class ShippingService
             ->first();
     }
 
+    /**
+     * Lacak resi (manifest detail per-lokasi + POD) via RajaOngkir.
+     * POST {rajaongkir}/track/waybill?awb=&courier=&last_phone_number=
+     *
+     * CATATAN: ini API RajaOngkir (header `key` = RAJAONGKIR_API_KEY), BUKAN
+     * Collaborator delivery (x-api-key). Dua key BERBEDA. Param last_phone_number
+     * (5 digit terakhir HP penerima) diminta sebagian kurir (mis. JNE).
+     *
+     * @return array{ok:bool,message:string,code:int,data:mixed}
+     */
+    public function trackWaybill(string $awb, string $courier, ?string $lastPhone = null): array
+    {
+        $awb = trim($awb);
+        $courier = strtolower(trim($courier));
+
+        if ($awb === '' || $courier === '') {
+            return ['ok' => false, 'message' => 'AWB atau kurir kosong.', 'code' => 0, 'data' => null];
+        }
+
+        $query = array_filter([
+            'awb' => $awb,
+            'courier' => $courier,
+            'last_phone_number' => $lastPhone ? preg_replace('/\D/', '', $lastPhone) : null,
+        ], fn ($v): bool => $v !== null && $v !== '');
+
+        try {
+            $response = Http::acceptJson()
+                ->withHeaders(['key' => (string) config('services.rajaongkir.api_key')])
+                ->baseUrl(rtrim((string) config('services.rajaongkir.base_url'), '/'))
+                ->post('/track/waybill?'.http_build_query($query));
+        } catch (\Throwable $e) {
+            return ['ok' => false, 'message' => $e->getMessage(), 'code' => 0, 'data' => null];
+        }
+
+        $body = $response->json() ?? [];
+        $ok = $response->successful() && ($body['meta']['status'] ?? '') === 'success';
+
+        return [
+            'ok' => $ok,
+            'message' => (string) ($body['meta']['message'] ?? ($ok ? 'OK' : 'Gagal melacak resi.')),
+            'code' => (int) ($body['meta']['code'] ?? $response->status()),
+            'data' => $body['data'] ?? null,
+        ];
+    }
+
+    /**
+     * Petakan nama layanan kirim (mis. "JNT - EZ", "IDEXPRESS - IDFLAT") ke kode
+     * kurir RajaOngkir (jnt, ide, dst). Diperlukan karena nama di Collaborator
+     * (IDEXPRESS) beda dgn kode tracking RajaOngkir (ide).
+     */
+    public static function courierCode(?string $shippingName): string
+    {
+        $name = strtolower(trim((string) $shippingName));
+        $name = trim(explode(' - ', $name)[0]); // ambil bagian sebelum " - "
+
+        $map = [
+            'idexpress' => 'ide', 'id express' => 'ide', 'ide' => 'ide',
+            'j&t' => 'jnt', 'jnt' => 'jnt', 'j&t express' => 'jnt',
+            'jne' => 'jne',
+            'sicepat' => 'sicepat',
+            'sap' => 'sap', 'sap express' => 'sap',
+            'ninja' => 'ninja', 'ninja xpress' => 'ninja',
+            'lion' => 'lion', 'lion parcel' => 'lion',
+            'tiki' => 'tiki', 'anteraja' => 'anteraja',
+            'pos' => 'pos', 'pos indonesia' => 'pos',
+            'wahana' => 'wahana', 'first' => 'first',
+        ];
+
+        return $map[$name] ?? $name;
+    }
+
     protected function client(): PendingRequest
     {
         return Http::acceptJson()

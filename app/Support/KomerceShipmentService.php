@@ -205,6 +205,43 @@ class KomerceShipmentService
     }
 
     /**
+     * Batalkan order yang sudah di-booking ke Komerce.
+     * PUT /order/api/v1/orders/cancel  body: {order_no}
+     * Komerce menolak (422) bila order sudah "Dikirim"/shipped.
+     *
+     * @return array{ok:bool,message:string,code:int,response?:array}
+     */
+    public function cancelOrder(string $orderNo): array
+    {
+        if (trim($orderNo) === '') {
+            return ['ok' => false, 'message' => 'Order tanpa order_no Komerce.', 'code' => 0];
+        }
+
+        try {
+            $response = Http::acceptJson()
+                ->withHeaders(['x-api-key' => (string) config('services.komerce_delivery.api_key')])
+                ->baseUrl(rtrim((string) config('services.komerce_delivery.base_url'), '/'))
+                ->put('/order/api/v1/orders/cancel', ['order_no' => $orderNo]);
+        } catch (\Throwable $e) {
+            Log::error('komerce.cancel.exception', ['order_no' => $orderNo, 'error' => $e->getMessage()]);
+
+            return ['ok' => false, 'message' => $e->getMessage(), 'code' => 0];
+        }
+
+        $body = $response->json() ?? [];
+        Log::info('komerce.cancel.response', ['order_no' => $orderNo, 'status' => $response->status(), 'body' => $body]);
+
+        $ok = $response->successful() && ($body['meta']['status'] ?? '') === 'success';
+
+        return [
+            'ok' => $ok,
+            'message' => (string) ($body['meta']['message'] ?? ($ok ? 'Order dibatalkan di Komerce.' : 'Gagal membatalkan order di Komerce.')),
+            'code' => (int) ($body['meta']['code'] ?? $response->status()),
+            'response' => $body,
+        ];
+    }
+
+    /**
      * Ambil label/resi siap-print dari Komerce (paket enterprise: Print Label).
      * POST /order/api/v1/orders/print-label?page=...&order_no=...
      * Respons JSON: data.base_64 = PDF (base64), data.path = nama file. Return PDF mentah.

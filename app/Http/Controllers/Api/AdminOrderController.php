@@ -58,7 +58,33 @@ class AdminOrderController extends Controller
             ]);
         }
 
-        DB::transaction(function () use ($order): void {
+        // Kalau order sudah di-booking ke Komerce, batalkan juga di sana supaya kurir
+        // tidak tetap menjemput (ghost order). Komerce menolak (422) bila sudah "Dikirim".
+        $komerceWarning = null;
+        $komerceOrderNo = trim((string) $order->komerce_order_no);
+
+        if ($komerceOrderNo !== '') {
+            $svc = app(KomerceShipmentService::class);
+
+            if ($svc->enabled()) {
+                $cancel = $svc->cancelOrder($komerceOrderNo);
+
+                if (! ($cancel['ok'] ?? false)) {
+                    // 422 = order sudah diproses/dikirim kurir -> JANGAN batalkan lokal.
+                    if ((int) ($cancel['code'] ?? 0) === 422) {
+                        throw ValidationException::withMessages([
+                            'order' => 'Tidak bisa dibatalkan: di Komerce order sudah diproses kurir ('.($cancel['message'] ?? 'shipped').').',
+                        ]);
+                    }
+
+                    // Gagal non-422 (mis. jaringan) -> tetap batalkan lokal, tapi beri peringatan
+                    // agar admin menutup order manual di dashboard Komerce.
+                    $komerceWarning = 'Pembatalan di Komerce GAGAL ('.($cancel['message'] ?? 'tidak diketahui').'). Mohon batalkan manual di dashboard Komerce untuk order '.$komerceOrderNo.'.';
+                }
+            }
+        }
+
+        DB::transaction(function () use ($order, $komerceWarning): void {
             UserUniqueCode::query()
                 ->where('user_id', $order->user_id)
                 ->where('ref_id', $order->id)
@@ -71,18 +97,18 @@ class AdminOrderController extends Controller
             $order->update([
                 'status' => 'cancelled',
                 'payment_status' => 'Dibatalkan admin',
-                'shipment_note' => 'Order dibatalkan oleh admin dan seluruh penyesuaian saldo sudah dikembalikan.',
+                'shipment_note' => 'Order dibatalkan oleh admin dan seluruh penyesuaian saldo sudah dikembalikan.'.($komerceWarning ? ' ⚠️ '.$komerceWarning : ''),
                 'cancel_requested_at' => null,
             ]);
         });
 
-        $order->logTracking('cancelled', 'admin');
+        $order->logTracking('cancelled', 'admin', $komerceWarning ? ['note' => $komerceWarning] : []);
 
         $order->refresh()->load(['items', 'user']);
 
         return response()->json([
             'data' => ApiData::order($order),
-            'message' => 'Order berhasil dibatalkan oleh admin.',
+            'message' => 'Order berhasil dibatalkan oleh admin.'.($komerceWarning ? ' (Catatan: '.$komerceWarning.')' : ''),
         ]);
     }
 

@@ -68,6 +68,7 @@ Route::prefix('v1')->middleware('throttle:api')->group(function (): void {
         Route::get('/customer/orders/{code}', [OrderController::class, 'show']);
         Route::post('/customer/orders/{code}/cancel', [OrderController::class, 'cancel']);
         Route::post('/customer/orders/{code}/complete', [OrderController::class, 'complete']);
+        Route::get('/customer/orders/{code}/track', [OrderController::class, 'track']);
         Route::post('/customer/orders/{code}/qris', [QrisController::class, 'generate']);
         Route::get('/customer/orders/{code}/qris/status', [QrisController::class, 'status']);
         Route::get('/checkout', [CheckoutController::class, 'show']);

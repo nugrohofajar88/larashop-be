@@ -215,6 +215,47 @@ class OrderController extends Controller
         ], 201);
     }
 
+    /**
+     * Lacak resi pesanan (manifest detail per-lokasi) via RajaOngkir track/waybill.
+     * Kurir & 5 digit terakhir HP penerima diambil otomatis dari order.
+     */
+    public function track(Request $request, string $code): JsonResponse
+    {
+        $order = Order::query()
+            ->where('user_id', $request->user()->id)
+            ->where('code', $code)
+            ->first();
+
+        abort_if($order === null, 404);
+
+        $awb = trim((string) $order->awb);
+
+        if ($awb === '') {
+            throw ValidationException::withMessages([
+                'order' => 'Resi belum tersedia. Pesanan belum dikirim kurir.',
+            ]);
+        }
+
+        $courier = ShippingService::courierCode($order->shipping_service_name);
+        $lastPhone = substr((string) preg_replace('/\D/', '', (string) $order->recipient_phone), -5);
+
+        $result = app(ShippingService::class)->trackWaybill($awb, $courier, $lastPhone);
+
+        if (! ($result['ok'] ?? false)) {
+            throw ValidationException::withMessages([
+                'tracking' => 'Gagal melacak resi '.$awb.' ('.$courier.'): '.($result['message'] ?? 'tidak diketahui').'.',
+            ]);
+        }
+
+        return response()->json([
+            'data' => [
+                'awb' => $awb,
+                'courier' => $courier,
+                'tracking' => $result['data'],
+            ],
+        ]);
+    }
+
     public function cancel(Request $request, string $code): JsonResponse
     {
         $order = Order::query()

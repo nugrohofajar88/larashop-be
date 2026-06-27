@@ -91,6 +91,7 @@ class WaBotService
             || preg_match('/^\/?cek-\d+$/', $text) === 1
             || preg_match('/^\/?cari[\s\-]+/', $text) === 1
             || preg_match('/^\/?tanya-admin\b/', $text) === 1
+            || preg_match('/^\/?lacak\b/', $text) === 1
             || preg_match('/^\/?cek-ongkir[\s\-]+/', $text) === 1;
     }
 
@@ -123,6 +124,15 @@ class WaBotService
         // Cek ongkir: "/cek-ongkir <wilayah>".
         if (preg_match('/^\/?cek-ongkir[\s\-]+(.+)$/i', trim($message), $matches)) {
             return $this->shippingEstimate(trim($matches[1]));
+        }
+
+        // Lacak pesanan: "/lacak <nomor-pesanan>".
+        if (preg_match('/^\/?lacak[\s\-]+(.+)$/i', trim($message), $matches)) {
+            return $this->trackOrder(trim($matches[1]), $phone);
+        }
+
+        if (preg_match('/^\/?lacak\s*$/i', trim($message))) {
+            return "Ketik */lacak nomor-pesanan*. Contoh: */lacak ATK2026061300001*";
         }
 
         // Konfirmasi pembayaran: "sudah bayar", "udah transfer", "sdh tf", "bukti transfer", "lunas".
@@ -503,6 +513,73 @@ class WaBotService
             ."Ongkir final mengikuti berat & produk saat */pesan*.";
     }
 
+    /**
+     * Lacak resi pesanan via RajaOngkir track/waybill. Hanya untuk pesanan milik
+     * nomor WA pengirim (cocokkan ke akun atau nomor penerima order).
+     */
+    protected function trackOrder(string $code, ?string $phone): string
+    {
+        $code = strtoupper(trim($code));
+        $order = Order::query()->with('user')->where('code', $code)->first();
+
+        if ($order === null) {
+            return "❌ Pesanan *{$code}* tidak ditemukan.\nPastikan nomornya benar, contoh: */lacak ATK2026061300001*";
+        }
+
+        // Verifikasi kepemilikan: nomor pengirim harus = akun pemesan atau penerima.
+        if ($phone !== null) {
+            $sender = $this->normalizePhone($phone);
+            $owner = $this->normalizePhone((string) ($order->user?->phone ?? ''));
+            $receiver = $this->normalizePhone((string) $order->recipient_phone);
+
+            if ($sender !== '' && $sender !== $owner && $sender !== $receiver) {
+                return "❌ Pesanan *{$code}* bukan atas nomor ini, jadi tidak bisa dilacak dari sini. 🙏";
+            }
+        }
+
+        $awb = trim((string) $order->awb);
+
+        if ($awb === '') {
+            return "📦 Pesanan *{$order->code}*\nStatus: *".$order->status."*\n\nResi belum terbit (pesanan belum dijemput kurir). Coba lacak lagi setelah pesanan dikirim ya 🙏";
+        }
+
+        $courier = ShippingService::courierCode($order->shipping_service_name);
+        $last5 = substr((string) preg_replace('/\D/', '', (string) $order->recipient_phone), -5);
+        $res = app(ShippingService::class)->trackWaybill($awb, $courier, $last5);
+
+        if (! ($res['ok'] ?? false)) {
+            return "📦 *{$order->code}* — Resi *{$awb}* ({$courier})\n\nBelum ada update tracking saat ini"
+                .(($res['message'] ?? '') !== '' ? " ({$res['message']})" : '').". Coba lagi nanti ya 🙏";
+        }
+
+        $d = (array) ($res['data'] ?? []);
+        $summary = (array) ($d['summary'] ?? []);
+        $pod = (array) ($d['delivery_status'] ?? []);
+        $manifest = (array) ($d['manifest'] ?? []);
+
+        $status = (string) ($summary['status'] ?? (($d['delivered'] ?? false) ? 'TERKIRIM' : '-'));
+        $courierName = (string) ($summary['courier_name'] ?? strtoupper($courier));
+
+        $head = "📦 *Lacak Pesanan {$order->code}*\n"
+            ."Resi: *{$awb}* ({$courierName})\n"
+            ."Status: *{$status}*";
+
+        if (($pod['pod_receiver'] ?? '') !== '') {
+            $head .= "\nDiterima: {$pod['pod_receiver']} ".trim((string) ($pod['pod_date'] ?? '').' '.($pod['pod_time'] ?? ''));
+        }
+
+        $lines = collect($manifest)->map(function ($m): string {
+            $m = (array) $m;
+            $when = trim((string) ($m['manifest_date'] ?? '').' '.($m['manifest_time'] ?? ''));
+            $desc = (string) ($m['manifest_description'] ?? ($m['manifest_code'] ?? '-'));
+            $city = ($m['city_name'] ?? '') !== '' ? " ({$m['city_name']})" : '';
+
+            return trim("• {$when} — {$desc}{$city}");
+        })->filter()->implode("\n");
+
+        return $head.($lines !== '' ? "\n\n*Riwayat perjalanan:*\n".$lines : "\n\nBelum ada riwayat perjalanan.");
+    }
+
     protected function productDetail(int $id): string
     {
         $product = Product::query()->with(['variants', 'category'])->find($id);
@@ -546,6 +623,7 @@ class WaBotService
             ."• */katalog* — lihat daftar produk\n"
             ."• */cari nama-produk* — cari produk (contoh: /cari pupuk)\n"
             ."• */cek-ongkir wilayah* — cek estimasi ongkir (contoh: /cek-ongkir nganjuk)\n"
+            ."• */lacak nomor-pesanan* — lacak resi (contoh: /lacak ATK2026061300001)\n"
             ."• */tanya-admin* — tanya langsung ke admin";
     }
 }
