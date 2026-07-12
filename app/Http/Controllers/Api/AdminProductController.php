@@ -121,18 +121,35 @@ class AdminProductController extends Controller
 
     public function destroy(Product $product): JsonResponse
     {
-        $product->delete();
+        // Produk yang pernah masuk transaksi (order NON-draft) -> ARSIPKAN (soft delete)
+        // supaya riwayat & laporan tetap bisa menautkan ke produk. Yang belum pernah
+        // ada transaksi -> HAPUS PERMANEN (varian & gambar ikut cascade).
+        $hasTransactions = $product->orderItems()
+            ->whereHas('order', fn ($q) => $q->where('status', '!=', 'draft'))
+            ->exists();
+
+        if ($hasTransactions) {
+            $product->delete(); // soft delete (deleted_at diisi)
+
+            return response()->json([
+                'mode' => 'archived',
+                'message' => 'Produk punya riwayat transaksi, jadi diarsipkan (disembunyikan dari katalog, tapi data laporan tetap aman).',
+            ]);
+        }
+
+        $product->forceDelete(); // hard delete + cascade varian/gambar
 
         return response()->json([
-            'message' => 'Produk berhasil dihapus.',
+            'mode' => 'deleted',
+            'message' => 'Produk dihapus permanen.',
         ]);
     }
 
     protected function validateProduct(Request $request, ?Product $product = null): array
     {
         return $request->validate([
-            'sku' => ['required', 'string', 'max:100', Rule::unique('products', 'sku')->ignore($product?->id)],
-            'slug' => ['required', 'string', 'max:150', Rule::unique('products', 'slug')->ignore($product?->id)],
+            'sku' => ['required', 'string', 'max:100', Rule::unique('products', 'sku')->ignore($product?->id)->whereNull('deleted_at')],
+            'slug' => ['required', 'string', 'max:150', Rule::unique('products', 'slug')->ignore($product?->id)->whereNull('deleted_at')],
             'name' => ['required', 'string', 'max:255'],
             'category_slug' => ['required', 'string', Rule::exists('categories', 'slug')],
             'short_description' => ['nullable', 'string', 'max:255'],
