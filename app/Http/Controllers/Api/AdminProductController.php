@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Category;
 use App\Models\Product;
+use App\Models\ProductVariant;
 use App\Support\ApiData;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -155,6 +156,7 @@ class AdminProductController extends Controller
             'short_description' => ['nullable', 'string', 'max:255'],
             'description' => ['required', 'string'],
             'variants' => ['nullable', 'array', 'min:1'],
+            'variants.*.id' => ['nullable', 'integer'],
             'variants.*.sku' => ['required_with:variants', 'string', 'max:100'],
             'variants.*.label' => ['required_with:variants', 'string', 'max:100'],
             'variants.*.price' => ['required_with:variants', 'integer', 'min:0'],
@@ -214,6 +216,9 @@ class AdminProductController extends Controller
             ->values()
             ->map(function (array $variant, int $index): array {
                 return [
+                    'id' => isset($variant['id']) && $variant['id'] !== null && $variant['id'] !== ''
+                        ? (int) $variant['id']
+                        : null,
                     'sku' => strtoupper(trim((string) $variant['sku'])),
                     'label' => trim((string) $variant['label']),
                     'price' => (int) $variant['price'],
@@ -282,10 +287,51 @@ class AdminProductController extends Controller
 
     protected function syncVariants(Product $product, array $variants): void
     {
-        $product->variants()->delete();
+        // UPSERT by id supaya id varian STABIL (tautan order_items tak putus tiap edit).
+        $existingIds = $product->variants()->pluck('id')->all();
+        $keptIds = [];
 
         foreach ($variants as $variant) {
-            $product->variants()->create($variant);
+            $id = $variant['id'] ?? null;
+            unset($variant['id']); // id tidak boleh mass-assign
+
+            if ($id !== null && in_array((int) $id, $existingIds, true)) {
+                $product->variants()->whereKey($id)->update($variant);
+                $keptIds[] = (int) $id;
+
+                continue;
+            }
+
+            // Varian dengan SKU sama yang sebelumnya ter-arsip (soft delete) -> PULIHKAN
+            // & perbarui, supaya tidak bentrok UNIQUE sku saat di-add lagi.
+            $trashed = $product->variants()->onlyTrashed()->where('sku', $variant['sku'])->first();
+
+            if ($trashed !== null) {
+                $trashed->restore();
+                $trashed->update($variant);
+                $keptIds[] = $trashed->id;
+
+                continue;
+            }
+
+            $keptIds[] = $product->variants()->create($variant)->id;
+        }
+
+        // Varian yang dihapus admin di editor (tak ada lagi di submission):
+        // pernah diorder (order non-draft) -> SOFT DELETE (arsip, riwayat/laporan aman);
+        // belum pernah -> HARD DELETE permanen.
+        foreach (array_diff($existingIds, $keptIds) as $variantId) {
+            $variant = ProductVariant::find($variantId);
+
+            if ($variant === null) {
+                continue;
+            }
+
+            $ordered = $variant->orderItems()
+                ->whereHas('order', fn ($q) => $q->where('status', '!=', 'draft'))
+                ->exists();
+
+            $ordered ? $variant->delete() : $variant->forceDelete();
         }
     }
 }

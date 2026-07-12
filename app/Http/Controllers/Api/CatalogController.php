@@ -22,7 +22,7 @@ class CatalogController extends Controller
         $sort = $request->string('sort')->toString();
 
         if ($category !== '' && $category !== 'all') {
-            $products->whereHas('category', fn ($query) => $query->where('name', $category));
+            $products->whereHas('category', fn($query) => $query->where('name', $category));
         }
 
         if ($status !== '' && $status !== 'all') {
@@ -54,22 +54,28 @@ class CatalogController extends Controller
             default => $products->orderByDesc('is_featured')->orderByDesc('published_at')->orderBy('name'),
         };
 
+        $perPage = 20;
+
         if ($search !== '') {
             $terms = preg_split('/\s+/', $search, -1, PREG_SPLIT_NO_EMPTY) ?: [];
-            // Semua kata harus cocok (AND); kalau kosong, longgarkan ke OR.
-            $items = (clone $products)->whereSearchTerms($terms, false)->get();
+            // Semua kata harus cocok (AND); kalau tak ada hasil, longgarkan ke OR.
+            $paginator = (clone $products)->whereSearchTerms($terms, false)->paginate($perPage);
 
-            if ($items->isEmpty()) {
-                $items = (clone $products)->whereSearchTerms($terms, true)->get();
+            if ($paginator->total() === 0) {
+                $paginator = (clone $products)->whereSearchTerms($terms, true)->paginate($perPage);
             }
         } else {
-            $items = $products->get();
+            $paginator = $products->paginate($perPage);
         }
 
         return response()->json([
-            'data' => $items->map(fn (Product $product) => ApiData::product($product))->values()->all(),
+            'data' => $paginator->getCollection()->map(fn(Product $product) => ApiData::product($product))->values()->all(),
             'meta' => [
-                'count' => $items->count(),
+                'count' => $paginator->count(),
+                'total' => $paginator->total(),
+                'current_page' => $paginator->currentPage(),
+                'last_page' => $paginator->lastPage(),
+                'per_page' => $paginator->perPage(),
                 'categories' => Product::query()
                     ->with('category')
                     ->where('public_status', 'active')
@@ -121,7 +127,7 @@ class CatalogController extends Controller
             'data' => [
                 'product' => ApiData::product($product),
                 'related_products' => $relatedProducts
-                    ->map(fn (Product $relatedProduct) => ApiData::product($relatedProduct))
+                    ->map(fn(Product $relatedProduct) => ApiData::product($relatedProduct))
                     ->values()
                     ->all(),
             ],
