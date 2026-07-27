@@ -47,7 +47,7 @@ class WaBotService
                     $reply .= "\n\n".$hint;
                 }
             }
-        } elseif ($order->hasSession($phone) || $order->isTrigger($message)) {
+        } elseif ($order->hasSession($phone) || $order->isTrigger($message) || $order->looksLikeOrderForm($message)) {
             // Sesi order aktif atau perintah /pesan -> masuk alur pemesanan.
             $reply = $order->handle($phone, $message);
         } else {

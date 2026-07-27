@@ -54,7 +54,7 @@ class CatalogController extends Controller
             default => $products->orderByDesc('is_featured')->orderByDesc('published_at')->orderBy('name'),
         };
 
-        $perPage = 20;
+        $perPage = min(200, max(1, $request->integer('per_page', 20)));
 
         if ($search !== '') {
             $terms = preg_split('/\s+/', $search, -1, PREG_SPLIT_NO_EMPTY) ?: [];

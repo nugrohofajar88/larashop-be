@@ -38,6 +38,17 @@ class WaOrderService
         return Cache::has($this->key($phone));
     }
 
+    /**
+     * True kalau teks sudah berbentuk form pesanan (ada baris "Pesanan:" dengan
+     * minimal satu item) — dipakai supaya pesan pre-filled dari guest-checkout
+     * web (lihat GuestCart::toWhatsappMessage() di larashop-fe) bisa langsung
+     * diproses tanpa pelanggan mengetik /pesan dulu.
+     */
+    public function looksLikeOrderForm(string $text): bool
+    {
+        return $this->parseForm($this->cleanInvisible($text))['items'] !== [];
+    }
+
     public function isTrigger(string $text): bool
     {
         $t = strtolower(trim($this->cleanInvisible($text)));
@@ -86,11 +97,20 @@ class WaOrderService
             return "Pesanan dibatalkan. Ketik */pesan* untuk mulai lagi.";
         }
 
+        $session = Cache::get($this->key($phone));
+
+        // Pesan sudah berbentuk form pesanan (mis. dari guest-checkout web) &
+        // belum ada sesi aktif -> proses langsung, tanpa perlu /pesan dulu.
+        if ($session === null && $this->looksLikeOrderForm($text)) {
+            $session = ['step' => 'await_form'];
+            $this->put($phone, $session);
+
+            return $this->handleForm($phone, $session, $text);
+        }
+
         if ($this->isTrigger($lower)) {
             return $this->start($phone);
         }
-
-        $session = Cache::get($this->key($phone));
 
         if ($session === null) {
             return $this->start($phone);
@@ -407,8 +427,13 @@ class WaOrderService
      */
     protected function parseForm(string $text): array
     {
+        // Whitespace SETELAH titik dua sengaja dibatasi ke [ \t]* (bukan \s*) dan
+        // grup ditangkap dengan * (bukan +): kalau field dibiarkan kosong (mis.
+        // pesan pre-filled dari guest-checkout web yang belum diisi pelanggan),
+        // \s* akan "makan" newline dan bocor menangkap isi baris berikutnya
+        // sebagai value field ini (lihat riwayat bug).
         $name = '';
-        if (preg_match('/nama\s*:\s*(.+)/i', $text, $m)) {
+        if (preg_match('/nama[ \t]*:[ \t]*(.*)/i', $text, $m)) {
             $name = trim($m[1]);
         }
 
@@ -418,7 +443,7 @@ class WaOrderService
         }
 
         $address = '';
-        if (preg_match('/alamat\s*:\s*(.+?)(?:\n\s*pesanan\s*:|\z)/is', $text, $m)) {
+        if (preg_match('/alamat[ \t]*:[ \t]*(.*?)(?:\n\s*pesanan\s*:|\z)/is', $text, $m)) {
             $address = trim(preg_replace('/\s+/', ' ', $m[1]));
         }
 
