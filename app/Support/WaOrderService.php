@@ -220,8 +220,14 @@ class WaOrderService
                 ? implode("\n", array_map(fn (string $i): string => "- {$i}", $form['items']))
                 : '- ';
 
+            // Field yang masih kosong dikasih contoh format (bukan dikosongkan
+            // begitu saja) supaya customer tahu apa yang diharapkan diisi;
+            // field yang sudah terisi tetap ditampilkan apa adanya.
+            $nameLine = $form['name'] !== '' ? $form['name'] : 'Nama_pelanggan/penerima';
+            $addressLine = $form['address'] !== '' ? $form['address'] : 'Detail alamat, Kelurahan/Desa, Kecamatan, Kota';
+
             return "Mohon lengkapi: *".implode('*, *', $missing)."*.\n\nKirim ulang dengan format:\n"
-                ."Nama: {$form['name']}\nNo HP: {$form['phone']}\nAlamat: {$form['address']}\nPesanan:\n{$itemLines}";
+                ."Nama: {$nameLine}\nNo HP: {$form['phone']}\nAlamat: {$addressLine}\nPesanan:\n{$itemLines}";
         }
 
         // Cocokkan tiap item ke katalog.
