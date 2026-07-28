@@ -182,6 +182,21 @@ class WaOrderService
     {
         $form = $this->parseForm($text);
 
+        // Pertahankan field yang sudah lengkap dari percobaan sebelumnya (mis.
+        // Pesanan sudah pernah terbaca) — kalau tidak, customer yang cuma
+        // membalas Nama/Alamat tanpa mengetik ulang daftar produk akan melihat
+        // seolah pesanannya hilang/tidak terbaca, padahal cuma field lain yang
+        // kurang.
+        $prev = $session['partial_form'] ?? [];
+        foreach (['name', 'phone', 'address'] as $field) {
+            if ($form[$field] === '' && ($prev[$field] ?? '') !== '') {
+                $form[$field] = $prev[$field];
+            }
+        }
+        if ($form['items'] === [] && ! empty($prev['items'])) {
+            $form['items'] = $prev['items'];
+        }
+
         $missing = [];
         if ($form['name'] === '') {
             $missing[] = 'Nama';
@@ -194,8 +209,19 @@ class WaOrderService
         }
 
         if ($missing !== []) {
+            $session['partial_form'] = $form;
+            $this->put($phone, $session);
+
+            // Format kirim-ulang tetap sama seperti biasa, tapi baris Pesanan
+            // diisi dengan item yang SUDAH terbaca (kalau ada) — supaya
+            // customer tidak mengira pesanannya hilang, cukup lengkapi Nama/
+            // Alamat lalu kirim ulang persis pesan ini.
+            $itemLines = $form['items'] !== []
+                ? implode("\n", array_map(fn (string $i): string => "- {$i}", $form['items']))
+                : '- ';
+
             return "Mohon lengkapi: *".implode('*, *', $missing)."*.\n\nKirim ulang dengan format:\n"
-                ."Nama: \nNo HP: \nAlamat: \nPesanan:\n- ";
+                ."Nama: {$form['name']}\nNo HP: {$form['phone']}\nAlamat: {$form['address']}\nPesanan:\n{$itemLines}";
         }
 
         // Cocokkan tiap item ke katalog.
