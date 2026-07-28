@@ -60,6 +60,18 @@ class ApiData
         };
     }
 
+    /**
+     * sold_count = basis manual (mis. riwayat penjualan dari marketplace lain,
+     * diisi admin sekali) DITAMBAH sold_total = order asli di Larashop
+     * (dihitung Product::scopeWithSoldTotal()). Sengaja dijumlah, bukan
+     * fallback: kalau fallback, basis manual itu langsung tertimpa jadi 1
+     * begitu produk dapat order pertama di sini, membuang riwayat lamanya.
+     */
+    public static function totalSoldCount(Product $product): int
+    {
+        return (int) ($product->sold_count ?? 0) + (int) ($product->sold_total ?? 0);
+    }
+
     public static function soldLabel(int $soldCount): string
     {
         if ($soldCount >= 1000) {
@@ -249,7 +261,7 @@ class ApiData
             'weight_grams' => $product->weight_grams,
             'stock' => $product->stock,
             'badge' => $product->badge_label,
-            'sold_label' => self::soldLabel((int) ($product->sold_total ?? $product->sold_count ?? 0)),
+            'sold_label' => self::soldLabel(self::totalSoldCount($product)),
             'description' => $product->description,
             'highlights' => $product->highlights ?? [],
             'default_variant' => $defaultVariant ? self::productVariant($defaultVariant) : null,
@@ -314,7 +326,7 @@ class ApiData
             'status' => self::publicStatusLabel($product->public_status),
             'catalog_status' => $product->catalog_status,
             'badge_label' => $product->badge_label,
-            'sold_count' => (int) ($product->sold_total ?? $product->sold_count ?? 0),
+            'sold_count' => self::totalSoldCount($product),
             'short_description' => $product->short_description,
             'description' => $product->description,
             'highlights' => $product->highlights ?? [],

@@ -582,7 +582,7 @@ class WaBotService
 
     protected function productDetail(int $id): string
     {
-        $product = Product::query()->with(['variants', 'category'])->find($id);
+        $product = Product::query()->with(['variants', 'category'])->withSoldTotal()->find($id);
 
         if ($product === null) {
             return "❌ Produk dengan ID {$id} tidak ditemukan.\nKetik */katalog* untuk lihat daftar produk.";
@@ -593,7 +593,7 @@ class WaBotService
             ."Kategori: ".($product->category->name ?? '-')."\n"
             ."Harga: {$price}\n"
             ."Stok: {$product->stock}\n"
-            ."Terjual: {$product->sold_count}";
+            ."Terjual: ".ApiData::totalSoldCount($product);
 
         $description = $product->short_description
             ?: Str::limit(trim(strip_tags((string) $product->description)), 200);
