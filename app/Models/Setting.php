@@ -38,4 +38,10 @@ class Setting extends Model
     {
         return filter_var(static::get('payment_qris_enabled', '0'), FILTER_VALIDATE_BOOLEAN);
     }
+
+    /** Metode bayar di tempat (COD) aktif (default MATI — perlu diaktifkan admin). */
+    public static function paymentCodEnabled(): bool
+    {
+        return filter_var(static::get('payment_cod_enabled', '0'), FILTER_VALIDATE_BOOLEAN);
+    }
 }

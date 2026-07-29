@@ -25,7 +25,7 @@ class AdminOrderController extends Controller
             ->get();
 
         return response()->json([
-            'data' => $orders->map(fn (Order $order) => ApiData::order($order))->values()->all(),
+            'data' => $orders->map(fn (Order $order) => $this->orderWithAdminExtras($order))->values()->all(),
         ]);
     }
 
@@ -34,8 +34,20 @@ class AdminOrderController extends Controller
         $order->load(['items', 'user', 'trackings']);
 
         return response()->json([
-            'data' => ApiData::order($order),
+            'data' => $this->orderWithAdminExtras($order),
         ]);
+    }
+
+    /**
+     * ApiData::order() dipakai bersama customer (OrderController) — field yang
+     * sensitif secara bisnis (mis. biaya jasa COD yang kita tanggung) TIDAK
+     * boleh ikut di sana, jadi ditambahkan terpisah di sini, admin-only.
+     */
+    protected function orderWithAdminExtras(Order $order): array
+    {
+        return ApiData::order($order) + [
+            'cod_service_fee' => (int) $order->cod_service_fee,
+        ];
     }
 
     public function validatePayment(Order $order): JsonResponse

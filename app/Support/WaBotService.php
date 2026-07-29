@@ -7,6 +7,7 @@ use App\Models\Product;
 use App\Models\User;
 use App\Models\WaMessage;
 use App\Support\Contracts\WhatsappGateway;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
 /**
@@ -34,24 +35,39 @@ class WaBotService
 
         $order = app(WaOrderService::class);
 
-        if ($this->isInfoCommand($message)) {
-            // Perintah info eksplisit selalu dilayani, walau sedang dalam sesi
-            // order (sesi tidak diganggu, jadi pelanggan bisa lanjut memesan).
-            $reply = $this->buildReply($message, $phone);
+        // Seluruh pemrosesan (termasuk panggilan API ongkir eksternal di
+        // WaOrderService) dibungkus try/catch: kalau API itu timeout/gagal,
+        // customer tetap dapat balasan (bukan hening tanpa respons), dan
+        // errornya tercatat di channel wablas supaya gampang dilacak.
+        try {
+            if ($this->isInfoCommand($message)) {
+                // Perintah info eksplisit selalu dilayani, walau sedang dalam sesi
+                // order (sesi tidak diganggu, jadi pelanggan bisa lanjut memesan).
+                $reply = $this->buildReply($message, $phone);
 
-            // Ingatkan kalau masih ada pesanan yang belum selesai.
-            if ($reply !== null && $reply !== '' && $order->hasSession($phone)) {
-                $hint = $order->continueHint($phone);
+                // Ingatkan kalau masih ada pesanan yang belum selesai.
+                if ($reply !== null && $reply !== '' && $order->hasSession($phone)) {
+                    $hint = $order->continueHint($phone);
 
-                if ($hint !== null) {
-                    $reply .= "\n\n".$hint;
+                    if ($hint !== null) {
+                        $reply .= "\n\n".$hint;
+                    }
                 }
+            } elseif ($order->hasSession($phone) || $order->isTrigger($message) || $order->looksLikeOrderForm($message)) {
+                // Sesi order aktif atau perintah /pesan -> masuk alur pemesanan.
+                $reply = $order->handle($phone, $message);
+            } else {
+                $reply = $this->buildReply($message, $phone);
             }
-        } elseif ($order->hasSession($phone) || $order->isTrigger($message) || $order->looksLikeOrderForm($message)) {
-            // Sesi order aktif atau perintah /pesan -> masuk alur pemesanan.
-            $reply = $order->handle($phone, $message);
-        } else {
-            $reply = $this->buildReply($message, $phone);
+        } catch (\Throwable $e) {
+            Log::channel('wablas')->error('wablas.handle.exception', [
+                'phone' => $phone,
+                'message' => $message,
+                'error' => $e->getMessage(),
+            ]);
+
+            $reply = "⚠️ Maaf, sistem lagi ada gangguan sesaat (mis. layanan cek ongkir sedang lambat). "
+                ."Coba kirim ulang beberapa saat lagi ya. Kalau masih gagal, ketik *tanya-admin*.";
         }
 
         if ($reply !== null && $reply !== '') {

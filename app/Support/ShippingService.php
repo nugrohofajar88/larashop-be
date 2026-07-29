@@ -53,7 +53,7 @@ class ShippingService
      * Hitung opsi ongkir dari gudang aktif ke destination.
      * Kode `code`/`service_code` = shipping_name/service_name Komerce (siap booking).
      *
-     * @return array<int, array{id:string,code:string,service_code:string,service:string,estimate:string,price:string,price_value:int,cashback_value:int,service_fee_value:int}>
+     * @return array<int, array{id:string,code:string,service_code:string,service:string,estimate:string,price:string,price_value:int,cashback_value:int,service_fee_value:int,is_cod:bool}>
      */
     public function costOptions(int|string $destinationId, int $weightGrams = self::DEFAULT_WEIGHT, int $itemValue = 0): array
     {
@@ -63,12 +63,16 @@ class ShippingService
             return [];
         }
 
+        // cod=yes dipakai sesuai dokumentasi Komerce: bukan cuma "aktifkan COD",
+        // tapi cara resmi untuk mengecek kemungkinan COD (field is_cod di tiap
+        // opsi kurir) — total yang dibayar pembeli (grandtotal) tidak berubah
+        // dibanding cod=no, jadi aman dipakai sebagai default untuk semua quote.
         $response = $this->client()->get('/tariff/api/v1/calculate', array_filter([
             'shipper_destination_id' => $origin->origin_id,
             'receiver_destination_id' => $destinationId,
             'weight' => round(max($weightGrams, 1) / 1000, 2), // KG (float) — API minta kilogram, bukan gram
             'item_value' => max($itemValue, 0),
-            'cod' => 'no',
+            'cod' => 'yes',
             'origin_pin_point' => $origin->pin_point ?: null,
         ], fn ($v): bool => $v !== null));
 
@@ -102,6 +106,7 @@ class ShippingService
                     'price_value' => $priceValue,
                     'cashback_value' => (int) ($svc['shipping_cashback'] ?? 0),
                     'service_fee_value' => (int) ($svc['service_fee'] ?? 0),
+                    'is_cod' => (bool) ($svc['is_cod'] ?? false),
                 ];
             }
         }

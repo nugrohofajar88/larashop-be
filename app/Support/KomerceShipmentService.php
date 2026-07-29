@@ -89,6 +89,8 @@ class KomerceShipmentService
             'ok' => true,
             'order_no' => (string) ($body['data']['order_no'] ?? ''),
             'order_id' => (int) ($body['data']['order_id'] ?? 0),
+            // 0 utk order non-COD (lihat buildPayload() — service_fee cuma dihitung kalau COD).
+            'service_fee' => (int) ($payload['service_fee'] ?? 0),
             'response' => $body,
         ];
     }
@@ -401,7 +403,7 @@ class KomerceShipmentService
                     'receiver_destination_id' => $receiverDestination,
                     'weight' => $weightKg,
                     'item_value' => $itemValue,
-                    'cod' => 'no',
+                    'cod' => $order->payment_method === 'COD' ? 'yes' : 'no',
                     'origin_pin_point' => $pinPoint ?: null,
                 ], fn ($v): bool => $v !== null));
         } catch (\Throwable $e) {
@@ -453,9 +455,11 @@ class KomerceShipmentService
             ];
         })->values()->all();
 
+        $isCod = $order->payment_method === 'COD';
         $shippingCost = (int) $tariff['shipping_cost'];
-        // payment_method = BANK TRANSFER -> service_fee = 0 (service_fee 2.8% hanya utk COD).
-        $serviceFee = 0;
+        // service_fee (~2.8%) cuma dikenakan Komerce untuk COD — ditanggung kita
+        // (dipotong dari net_income), bukan ditambahkan ke tagihan pembeli.
+        $serviceFee = $isCod ? (int) $tariff['service_fee'] : 0;
         $additionalCost = 0;
         // grand_total = total produk + ongkir + biaya tambahan (sesuai dokumentasi).
         $grandTotal = (int) $order->items_total + $shippingCost + $additionalCost;
@@ -479,13 +483,13 @@ class KomerceShipmentService
             'receiver_email' => (string) ($order->user->email ?? 'customer@akartanikimia.id'),
             'shipping' => (string) $tariff['shipping_name'],
             'shipping_type' => (string) $tariff['service_name'],
-            'payment_method' => 'BANK TRANSFER',
+            'payment_method' => $isCod ? 'COD' : 'BANK TRANSFER',
             'shipping_cost' => $shippingCost,
             'shipping_cashback' => (int) $tariff['shipping_cashback'],
             'service_fee' => $serviceFee,
             'additional_cost' => $additionalCost,
             'grand_total' => $grandTotal,
-            'cod_value' => 0,
+            'cod_value' => $isCod ? $grandTotal : 0,
             'insurance_value' => 0,
             'order_details' => $details,
         ];

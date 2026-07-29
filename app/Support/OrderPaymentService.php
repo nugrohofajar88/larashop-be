@@ -21,9 +21,11 @@ class OrderPaymentService
         DB::transaction(function () use ($order, $source): void {
             $order->update([
                 'status' => 'paid',
-                'payment_status' => 'Tervalidasi',
+                'payment_status' => $source === 'cod' ? 'COD - bayar saat barang diterima' : 'Tervalidasi',
                 'paid_at' => now(),
-                'shipment_note' => 'Pembayaran tervalidasi. Order siap diproses ke shipment.',
+                'shipment_note' => $source === 'cod'
+                    ? 'Pesanan COD dikonfirmasi. Order siap diproses ke shipment.'
+                    : 'Pembayaran tervalidasi. Order siap diproses ke shipment.',
             ]);
 
             if (Setting::uniqueCodeEnabled() && (int) $order->unique_code > 0) {
@@ -75,15 +77,17 @@ class OrderPaymentService
 
         if ($komerce->enabled()) {
             $result = $komerce->createOrder($order);
+            $validatedLabel = $source === 'cod' ? 'Pesanan COD dikonfirmasi' : 'Pembayaran tervalidasi';
 
             if ($result['ok']) {
                 $order->update([
                     'komerce_order_no' => $result['order_no'] ?? null,
                     'komerce_order_id' => $result['order_id'] ?? null,
-                    'shipment_note' => 'Pembayaran tervalidasi. Order ekspedisi dibuat: '.($result['order_no'] ?? '-').'.',
+                    'cod_service_fee' => (int) ($result['service_fee'] ?? 0),
+                    'shipment_note' => $validatedLabel.'. Order ekspedisi dibuat: '.($result['order_no'] ?? '-').'.',
                 ]);
             } else {
-                $bookingMessage = 'Pembayaran tervalidasi, tapi booking ekspedisi GAGAL: '
+                $bookingMessage = $validatedLabel.', tapi booking ekspedisi GAGAL: '
                     .($result['message'] ?? 'tidak diketahui').'. Bisa dicoba ulang.';
                 $order->update(['shipment_note' => $bookingMessage]);
             }
@@ -92,7 +96,11 @@ class OrderPaymentService
         $order->logTracking('paid', $source);
 
         // Beri tahu pelanggan via WhatsApp (semua jalur: admin panel, WA, webhook QRIS, poll).
-        $this->notifyCustomer($order);
+        // Kecuali COD: WaOrderService sudah kirim balasan konfirmasi order COD-nya
+        // sendiri di turn yang sama — notifikasi ini akan dobel kalau ikut dikirim.
+        if ($source !== 'cod') {
+            $this->notifyCustomer($order);
+        }
 
         return [
             'message' => $bookingMessage ?? 'Pembayaran berhasil divalidasi.',

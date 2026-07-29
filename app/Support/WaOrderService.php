@@ -262,6 +262,11 @@ class WaOrderService
 
         $session['form'] = $form;
         $session['items'] = $items;
+        // Simpan juga sebagai partial_form SEBELUM panggil API ongkir (di
+        // bawah) — kalau API itu timeout/gagal, form yang sudah lengkap ini
+        // tetap tersimpan, jadi customer tidak perlu ketik ulang saat retry.
+        $session['partial_form'] = $form;
+        $this->put($phone, $session);
 
         // Cari wilayah tujuan dari alamat.
         $dest = $this->resolveDestination($form['address']);
@@ -362,6 +367,16 @@ class WaOrderService
         $shippingTotal = (int) ($shipping['price_value'] ?? 0);
         $grandTotal = $itemsTotal + $shippingTotal + $uniqueCode;
 
+        // COD hanya ditawarkan kalau diaktifkan admin DAN kurir yang kepilih
+        // (termurah) memang mendukungnya. Totalnya sengaja TANPA kode unik
+        // (kurir menagih tunai, harus angka bulat) — beda dari total transfer
+        // di atas kalau kode unik aktif.
+        $codLine = '';
+        if (\App\Models\Setting::paymentCodEnabled() && ($shipping['is_cod'] ?? false)) {
+            $codTotal = $itemsTotal + $shippingTotal;
+            $codLine = "• Bayar di tempat? Ketik *COD* — kurir menagih tunai ".$this->money($codTotal)." saat barang diterima (tanpa kode unik).\n";
+        }
+
         return "📋 *Konfirmasi Pesanan*\n\n"
             ."Nama: {$form['name']}\n"
             ."HP: {$form['phone']}\n"
@@ -373,7 +388,8 @@ class WaOrderService
             .($uniqueCode > 0 ? "Kode unik: ".$this->money($uniqueCode)."\n" : '')
             ."*Total: ".$this->money($grandTotal)."*\n\n"
             ."⚠️ *Pastikan TUJUAN di atas sudah benar* — ini yang menentukan ongkir & area pengiriman.\n\n"
-            ."• Balas *YA* untuk konfirmasi.\n"
+            ."• Balas *YA* untuk konfirmasi (Transfer/QRIS).\n"
+            ."{$codLine}"
             ."• Tujuan belum pas? Ketik *ganti wilayah* untuk pilih ulang.\n"
             ."• Atau perbaiki alamat lalu *kirim ulang form* (ongkir dihitung ulang otomatis).\n"
             ."• Ketik *batal* untuk membatalkan.";
@@ -398,9 +414,23 @@ class WaOrderService
             return "Baik 👍 Ketik *kelurahan/desa, kecamatan, kota* tujuan yang benar.\nContoh: *Pagentan, Singosari, Malang*";
         }
 
-        if (! in_array($lower, ['ya', 'y', 'ok', 'oke', 'betul', 'benar', 'setuju', 'iya', 'lanjut'], true)) {
-            // Selain YA/batal/ganti wilayah -> tampilkan ulang ringkasan (halaman proses order).
+        $isCod = in_array($lower, ['cod', 'bayar ditempat', 'bayar di tempat'], true);
+
+        if (! $isCod && ! in_array($lower, ['ya', 'y', 'ok', 'oke', 'betul', 'benar', 'setuju', 'iya', 'lanjut'], true)) {
+            // Selain YA/COD/batal/ganti wilayah -> tampilkan ulang ringkasan (halaman proses order).
             return $this->buildConfirmation($session);
+        }
+
+        if ($isCod) {
+            // State bisa berubah sejak quote dibuat (admin matikan COD, dll) —
+            // cek ulang sebelum benar-benar dipakai.
+            if (! \App\Models\Setting::paymentCodEnabled() || ! ($session['shipping']['is_cod'] ?? false)) {
+                return "Maaf, COD tidak/belum tersedia untuk pesanan ini. Balas *YA* untuk lanjut dengan Transfer/QRIS, atau *batal* untuk membatalkan.";
+            }
+
+            // COD: tanpa kode unik — kurir menagih tunai, harus angka bulat.
+            $session['unique_code'] = 0;
+            $session['payment_method'] = 'COD';
         }
 
         try {
@@ -414,6 +444,15 @@ class WaOrderService
         }
 
         $this->forget($phone);
+
+        if ($isCod) {
+            // Tidak ada apa pun untuk divalidasi (bayar di tempat) -> langsung
+            // tandai paid & auto-booking Komerce, sama seperti admin klik
+            // "Validasi Pembayaran" untuk order transfer/QRIS.
+            app(OrderPaymentService::class)->markPaid($order, 'cod');
+
+            return $this->orderConfirmationCod($order, $session);
+        }
 
         // Metode pembayaran yang ditawarkan diatur admin (Pengaturan Pembayaran).
         // QRIS = teknis-aktif (API terkonfig) DAN dipilih admin.
@@ -667,6 +706,11 @@ class WaOrderService
         $shipping = $session['shipping'];
         $items = $session['items'];
         $uniqueCode = (int) ($session['unique_code'] ?? 0);
+        $paymentMethod = $session['payment_method'] ?? 'Transfer manual';
+        $paymentStatus = $paymentMethod === 'COD' ? 'COD - bayar saat barang diterima' : 'Menunggu transfer';
+        $shipmentNote = $paymentMethod === 'COD'
+            ? 'Order via WhatsApp (form), bayar COD. Siap dibooking ke ekspedisi.'
+            : 'Order via WhatsApp (form). Menunggu validasi pembayaran.';
 
         $itemsTotal = (int) collect($items)->sum(fn (array $i): int => $i['price'] * $i['qty']);
         $shippingTotal = (int) ($shipping['price_value'] ?? 0);
@@ -675,7 +719,7 @@ class WaOrderService
         // retry: lindungi dari race kode order (dua order WA bersamaan → kode sama).
         return retry(5, fn () => DB::transaction(function () use (
             $phone, $name, $recipientPhone, $addressLine, $dest, $shipping, $items,
-            $itemsTotal, $shippingTotal, $uniqueCode, $grandTotal
+            $itemsTotal, $shippingTotal, $uniqueCode, $grandTotal, $paymentMethod, $paymentStatus, $shipmentNote
         ): Order {
             $user = $this->findOrCreateCustomer($phone, $name);
 
@@ -699,8 +743,8 @@ class WaOrderService
                 'user_id' => $user->id,
                 'customer_address_id' => $address->id,
                 'status' => 'pending_payment',
-                'payment_method' => 'Transfer manual',
-                'payment_status' => 'Menunggu transfer',
+                'payment_method' => $paymentMethod,
+                'payment_status' => $paymentStatus,
                 'items_total' => $itemsTotal,
                 'shipping_total' => $shippingTotal,
                 'shipping_cashback' => (int) ($shipping['cashback_value'] ?? 0),
@@ -711,7 +755,7 @@ class WaOrderService
                 'shipping_courier_code' => $shipping['code'] ?? null,
                 'shipping_service_code' => $shipping['service_code'] ?? null,
                 'shipping_estimate_days' => $shipping['estimate'] ?? null,
-                'shipment_note' => 'Order via WhatsApp (form). Menunggu validasi pembayaran.',
+                'shipment_note' => $shipmentNote,
                 'recipient_name' => $name,
                 'recipient_phone' => $recipientPhone,
                 'address_label' => $address->label,
@@ -777,6 +821,31 @@ class WaOrderService
             .$rekText
             ."\nSilakan transfer sesuai *total di atas (termasuk kode unik)* lalu kirim bukti ke chat ini. "
             ."Admin akan memvalidasi pembayaranmu. 🙏";
+    }
+
+    protected function orderConfirmationCod(Order $order, array $session): string
+    {
+        $form = $session['form'] ?? [];
+        $dest = $session['destination'] ?? [];
+
+        $lines = $order->items->map(
+            fn ($i): string => "• {$i->quantity}x {$i->product_name}".
+                ($i->variant_label ? " ({$i->variant_label})" : '').
+                " = ".$this->money((int) $i->subtotal)
+        )->implode("\n");
+
+        return "✅ *Pesanan COD berhasil dibuat!*\n\n"
+            ."Kode: *{$order->code}*\n\n"
+            ."Nama: ".($form['name'] ?? $order->recipient_name)."\n"
+            ."HP: ".($form['phone'] ?? $order->recipient_phone)."\n"
+            ."Alamat: ".($form['address'] ?? '')."\n"
+            ."Tujuan: ".($dest['label'] ?? '')."\n\n"
+            ."{$lines}\n"
+            ."Subtotal: ".$this->money((int) $order->items_total)."\n"
+            ."Ongkir: ".$this->money((int) $order->shipping_total)."\n"
+            ."*Total bayar tunai ke kurir: ".$this->money((int) $order->grand_total)."*\n\n"
+            ."💵 Siapkan uang pas sejumlah di atas — kurir akan menagih saat barang diserahkan. "
+            ."Pesananmu segera kami proses. 🙏";
     }
 
     protected function orderConfirmationQris(Order $order, int $finalAmount, bool $includeTransfer = false, string $qrUrl = ''): string

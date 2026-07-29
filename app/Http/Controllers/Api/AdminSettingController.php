@@ -19,6 +19,7 @@ class AdminSettingController extends Controller
                 'unique_code_enabled' => Setting::uniqueCodeEnabled(),
                 'payment_transfer_enabled' => Setting::paymentTransferEnabled(),
                 'payment_qris_enabled' => Setting::paymentQrisEnabled(),
+                'payment_cod_enabled' => Setting::paymentCodEnabled(),
             ],
         ]);
     }
@@ -32,6 +33,7 @@ class AdminSettingController extends Controller
             'unique_code_enabled' => ['nullable', 'boolean'],
             'payment_transfer_enabled' => ['nullable', 'boolean'],
             'payment_qris_enabled' => ['nullable', 'boolean'],
+            'payment_cod_enabled' => ['nullable', 'boolean'],
         ]);
 
         Setting::set('store_whatsapp', $this->normalizeWa((string) ($validated['store_whatsapp'] ?? '')));
@@ -40,6 +42,7 @@ class AdminSettingController extends Controller
         Setting::set('unique_code_enabled', $request->boolean('unique_code_enabled') ? '1' : '0');
         Setting::set('payment_transfer_enabled', $request->boolean('payment_transfer_enabled') ? '1' : '0');
         Setting::set('payment_qris_enabled', $request->boolean('payment_qris_enabled') ? '1' : '0');
+        Setting::set('payment_cod_enabled', $request->boolean('payment_cod_enabled') ? '1' : '0');
 
         return response()->json([
             'message' => 'Pengaturan toko berhasil disimpan.',
