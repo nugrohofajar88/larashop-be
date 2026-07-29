@@ -108,7 +108,9 @@ class WaBotService
             || preg_match('/^\/?cari[\s\-]+/', $text) === 1
             || preg_match('/^\/?tanya-admin\b/', $text) === 1
             || preg_match('/^\/?lacak\b/', $text) === 1
-            || preg_match('/^\/?cek-ongkir[\s\-]+/', $text) === 1;
+            || preg_match('/^\/?cek-ongkir[\s\-]+/', $text) === 1
+            || in_array($text, ['/pesananku', 'pesananku'], true)
+            || preg_match('/^\/?batal[\s\-]+\S/', $text) === 1;
     }
 
     /**
@@ -149,6 +151,18 @@ class WaBotService
 
         if (preg_match('/^\/?lacak\s*$/i', trim($message))) {
             return "Ketik */lacak nomor-pesanan*. Contoh: */lacak ATK2026061300001*";
+        }
+
+        // Daftar pesanan aktif: "/pesananku".
+        if (in_array($text, ['/pesananku', 'pesananku'], true)) {
+            return $phone !== null ? $this->myOrders($phone) : null;
+        }
+
+        // Batalkan pesanan yang sudah dibuat (beda dari "batal" polos yang
+        // membatalkan SESI form yang sedang diisi — lihat WaOrderService::handle()):
+        // "batal <nomor-pesanan>".
+        if (preg_match('/^\/?batal[\s\-]+(.+)$/i', trim($message), $matches)) {
+            return $this->cancelOrderByCustomer(trim($matches[1]), $phone);
         }
 
         // Konfirmasi pembayaran: "sudah bayar", "udah transfer", "sdh tf", "bukti transfer", "lunas".
@@ -596,6 +610,73 @@ class WaBotService
         return $head.($lines !== '' ? "\n\n*Riwayat perjalanan:*\n".$lines : "\n\nBelum ada riwayat perjalanan.");
     }
 
+    /**
+     * Daftar pesanan yang masih berjalan (belum selesai/batal) milik nomor ini —
+     * jadi titik masuk supaya pelanggan tahu kode order sebelum /lacak atau batal.
+     */
+    protected function myOrders(string $phone): string
+    {
+        $intl = $this->normalizePhone($phone);
+        $local = str_starts_with($intl, '62') ? '0'.substr($intl, 2) : $intl;
+        $variants = array_values(array_unique(array_filter([$intl, $local])));
+
+        if ($variants === []) {
+            return "Nomor tidak dikenali, coba lagi ya 🙏";
+        }
+
+        $orders = Order::query()
+            ->with('user')
+            ->where(function ($q) use ($variants): void {
+                $q->whereIn('recipient_phone', $variants)
+                    ->orWhereHas('user', fn ($u) => $u->whereIn('phone', $variants));
+            })
+            ->whereIn('status', ['pending_payment', 'paid', 'processing', 'shipped'])
+            ->orderByDesc('id')
+            ->limit(10)
+            ->get();
+
+        if ($orders->isEmpty()) {
+            return "Kamu belum punya pesanan yang sedang berjalan. Ketik */pesan* untuk mulai belanja 🌱";
+        }
+
+        $lines = $orders->map(fn (Order $o): string => "• *{$o->code}* — ".ApiData::orderStatusLabel($o->status)
+            ." — ".$this->money((int) $o->grand_total))->implode("\n");
+
+        return "📋 *Pesanan Aktifmu*\n\n{$lines}\n\n"
+            ."• */lacak kode* — cek status pengiriman\n"
+            ."• *batal kode* — batalkan pesanan (kalau belum di-resi)";
+    }
+
+    /**
+     * Batalkan pesanan yang SUDAH DIBUAT (beda dari sekadar batal isi form) —
+     * aturan sama persis dengan pembatalan via web (OrderCancellationService),
+     * satu sumber logika biar tidak ada celah beda perlakuan antar jalur.
+     */
+    protected function cancelOrderByCustomer(string $code, ?string $phone): string
+    {
+        $code = strtoupper(trim($code));
+        $order = Order::query()->with('user')->where('code', $code)->first();
+
+        if ($order === null) {
+            return "❌ Pesanan *{$code}* tidak ditemukan.\nPastikan nomornya benar, contoh: *batal ATK2026061300001*";
+        }
+
+        // Verifikasi kepemilikan: nomor pengirim harus = akun pemesan atau penerima.
+        if ($phone !== null) {
+            $sender = $this->normalizePhone($phone);
+            $owner = $this->normalizePhone((string) ($order->user?->phone ?? ''));
+            $receiver = $this->normalizePhone((string) $order->recipient_phone);
+
+            if ($sender !== '' && $sender !== $owner && $sender !== $receiver) {
+                return "❌ Pesanan *{$code}* bukan atas nomor ini, jadi tidak bisa dibatalkan dari sini. 🙏";
+            }
+        }
+
+        $result = app(\App\Support\OrderCancellationService::class)->cancel($order);
+
+        return ($result['ok'] ? '✅ ' : '❌ ').$result['message'];
+    }
+
     protected function productDetail(int $id): string
     {
         $product = Product::query()->with(['variants', 'category'])->withSoldTotal()->find($id);
@@ -640,6 +721,8 @@ class WaBotService
             ."• */cari nama-produk* — cari produk (contoh: /cari pupuk)\n"
             ."• */cek-ongkir wilayah* — cek estimasi ongkir (contoh: /cek-ongkir nganjuk)\n"
             ."• */lacak nomor-pesanan* — lacak resi (contoh: /lacak ATK2026061300001)\n"
+            ."• */pesananku* — lihat pesanan yang sedang berjalan\n"
+            ."• *batal nomor-pesanan* — batalkan pesanan (contoh: batal ATK2026061300001)\n"
             ."• */tanya-admin* — tanya langsung ke admin";
     }
 }
