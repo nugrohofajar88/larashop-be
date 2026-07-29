@@ -64,6 +64,7 @@ class KomerceShipmentService
 
         try {
             $response = Http::acceptJson()
+                ->timeout(25)
                 ->withHeaders(['x-api-key' => (string) config('services.komerce_delivery.api_key')])
                 ->baseUrl(rtrim((string) config('services.komerce_delivery.base_url'), '/'))
                 ->post('/order/api/v1/orders/store', $payload);
@@ -115,6 +116,7 @@ class KomerceShipmentService
 
         try {
             $response = Http::acceptJson()
+                ->timeout(25)
                 ->withHeaders(['x-api-key' => (string) config('services.komerce_delivery.api_key')])
                 ->baseUrl(rtrim((string) config('services.komerce_delivery.base_url'), '/'))
                 ->post('/order/api/v1/pickup/request', $payload);
@@ -175,6 +177,7 @@ class KomerceShipmentService
 
         try {
             $response = Http::acceptJson()
+                ->timeout(25)
                 ->withHeaders(['x-api-key' => (string) config('services.komerce_delivery.api_key')])
                 ->baseUrl(rtrim((string) config('services.komerce_delivery.base_url'), '/'))
                 ->post('/order/api/v1/pickup/request', $payload);
@@ -221,6 +224,7 @@ class KomerceShipmentService
 
         try {
             $response = Http::acceptJson()
+                ->timeout(25)
                 ->withHeaders(['x-api-key' => (string) config('services.komerce_delivery.api_key')])
                 ->baseUrl(rtrim((string) config('services.komerce_delivery.base_url'), '/'))
                 ->put('/order/api/v1/orders/cancel', ['order_no' => $orderNo]);
@@ -396,6 +400,7 @@ class KomerceShipmentService
     {
         try {
             $response = Http::acceptJson()
+                ->timeout(15)
                 ->withHeaders(['x-api-key' => (string) config('services.komerce_delivery.api_key')])
                 ->baseUrl(rtrim((string) config('services.komerce_delivery.base_url'), '/'))
                 ->get('/tariff/api/v1/calculate', array_filter([

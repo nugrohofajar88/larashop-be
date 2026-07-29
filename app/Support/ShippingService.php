@@ -166,6 +166,7 @@ class ShippingService
 
         try {
             $response = Http::acceptJson()
+                ->timeout(15)
                 ->withHeaders(['key' => (string) config('services.rajaongkir.api_key')])
                 ->baseUrl(rtrim((string) config('services.rajaongkir.base_url'), '/'))
                 ->post('/track/waybill?'.http_build_query($query));
@@ -212,7 +213,12 @@ class ShippingService
 
     protected function client(): PendingRequest
     {
+        // Timeout eksplisit: tanpa ini PHP/cURL bisa menunggu jauh lebih lama
+        // dari batas tunggu FE ke BE (15 detik) kalau Komerce lambat/gangguan,
+        // sehingga customer/admin selalu melihat error cURL yang membingungkan
+        // padahal BE sendiri belum tentu gagal, cuma belum sempat merespons.
         return Http::acceptJson()
+            ->timeout(15)
             ->baseUrl(rtrim((string) config('services.komerce_delivery.base_url'), '/'))
             ->withHeaders(['x-api-key' => (string) config('services.komerce_delivery.api_key')]);
     }

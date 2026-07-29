@@ -45,7 +45,8 @@ class QrislyService
 
     protected function http(): \Illuminate\Http\Client\PendingRequest
     {
-        return Http::withHeaders(['x-api-key' => (string) config('services.komerce_delivery.api_key')])
+        return Http::timeout(20)
+            ->withHeaders(['x-api-key' => (string) config('services.komerce_delivery.api_key')])
             ->baseUrl(rtrim((string) config('services.komerce_delivery.base_url'), '/'));
     }
 
