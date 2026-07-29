@@ -720,9 +720,9 @@ class WaBotService
             ."• */katalog* — lihat daftar produk\n"
             ."• */cari nama-produk* — cari produk (contoh: /cari pupuk)\n"
             ."• */cek-ongkir wilayah* — cek estimasi ongkir (contoh: /cek-ongkir nganjuk)\n"
-            ."• */lacak nomor-pesanan* — lacak resi (contoh: /lacak ATK2026061300001)\n"
             ."• */pesananku* — lihat pesanan yang sedang berjalan\n"
-            ."• *batal nomor-pesanan* — batalkan pesanan (contoh: batal ATK2026061300001)\n"
+            ."• */lacak nomor-pesanan* — lacak resi (contoh: /lacak ATK2026061300001)\n"
+            ."• */batal nomor-pesanan* — batalkan pesanan (contoh: /batal ATK2026061300001)\n"
             ."• */tanya-admin* — tanya langsung ke admin";
     }
 }
