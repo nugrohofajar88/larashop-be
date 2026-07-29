@@ -644,7 +644,7 @@ class WaBotService
 
         return "📋 *Pesanan Aktifmu*\n\n{$lines}\n\n"
             ."• */lacak kode* — cek status pengiriman\n"
-            ."• *batal kode* — batalkan pesanan (kalau belum di-resi)";
+            ."• */batal kode* — batalkan pesanan (kalau belum di-resi)";
     }
 
     /**
