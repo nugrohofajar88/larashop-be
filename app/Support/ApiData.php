@@ -400,6 +400,12 @@ class ApiData
             'customer_phone' => $order->user?->phone,
             'phone' => $order->recipient_phone,
             'payment_status' => $order->payment_status,
+            // Kapan order pending_payment ini otomatis dibatalkan (lihat
+            // Order::PAYMENT_EXPIRE_HOURS / ExpireUnpaidOrders) - null kalau
+            // sudah bukan pending_payment lagi (tidak relevan).
+            'payment_deadline' => $order->status === 'pending_payment'
+                ? $order->created_at->copy()->addHours(Order::PAYMENT_EXPIRE_HOURS)->translatedFormat('d M Y, H:i')
+                : null,
             'shipping_service' => $order->shipping_service_name,
             'shipping_estimate' => $order->shipping_estimate_days,
             'awb' => $order->awb,

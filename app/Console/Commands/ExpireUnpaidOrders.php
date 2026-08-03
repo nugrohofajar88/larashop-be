@@ -10,13 +10,13 @@ use Illuminate\Support\Facades\DB;
 
 class ExpireUnpaidOrders extends Command
 {
-    protected $signature = 'orders:expire-unpaid {--hours=24}';
+    protected $signature = 'orders:expire-unpaid {--hours=}';
 
     protected $description = 'Batalkan order pending_payment yang melewati batas waktu pembayaran (default 24 jam) & kembalikan stok';
 
     public function handle(StockService $stock): int
     {
-        $hours = max(1, (int) $this->option('hours'));
+        $hours = max(1, (int) ($this->option('hours') ?: Order::PAYMENT_EXPIRE_HOURS));
         $cutoff = now()->subHours($hours);
 
         $orders = Order::query()

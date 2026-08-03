@@ -810,6 +810,8 @@ class WaOrderService
             fn (PaymentAccount $a): string => "• {$a->bank_name}: *{$a->account_number}* a.n. {$a->account_holder}"
         )->implode("\n")."\n";
 
+        $deadline = $order->created_at->copy()->addHours(Order::PAYMENT_EXPIRE_HOURS)->translatedFormat('d M Y, H:i');
+
         return "✅ *Pesanan berhasil dibuat!*\n\n"
             ."Kode: *{$order->code}*\n\n"
             ."Nama: ".($form['name'] ?? $order->recipient_name)."\n"
@@ -823,7 +825,8 @@ class WaOrderService
             ."*Total transfer: ".$this->money((int) $order->grand_total)."*\n"
             .$rekText
             ."\nSilakan transfer sesuai *total di atas (termasuk kode unik)* lalu kirim bukti ke chat ini. "
-            ."Admin akan memvalidasi pembayaranmu. 🙏";
+            ."Admin akan memvalidasi pembayaranmu.\n\n"
+            ."⏰ *Selesaikan pembayaran sebelum {$deadline} WIB* — order otomatis dibatalkan & stok dilepas kalau lewat batas waktu ini. 🙏";
     }
 
     protected function orderConfirmationCod(Order $order, array $session): string
@@ -872,6 +875,8 @@ class WaOrderService
             }
         }
 
+        $deadline = $order->created_at->copy()->addHours(Order::PAYMENT_EXPIRE_HOURS)->translatedFormat('d M Y, H:i');
+
         return "✅ *Pesanan berhasil dibuat!*\n\n"
             ."Kode: *{$order->code}*\n\n"
             ."{$lines}\n"
@@ -882,7 +887,8 @@ class WaOrderService
             ."Nominal sudah otomatis sesuai total, jadi tinggal scan & bayar."
             .($qrUrl !== '' ? "\n\n🔗 Buka/simpan QR di sini:\n".$qrUrl : '')
             ."\n\nBegitu lunas, pesanan langsung diproses. 🙏"
-            .$transferText;
+            .$transferText
+            ."\n\n⏰ *Selesaikan pembayaran sebelum {$deadline} WIB* — kalau QR kedaluwarsa duluan, minta QR baru sebelum batas waktu ini; order otomatis dibatalkan kalau lewat.";
     }
 
     /* ----------------------------------------------------------------- */

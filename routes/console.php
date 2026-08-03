@@ -10,7 +10,13 @@ Artisan::command('inspire', function () {
 
 // Auto-expire: batalkan order pending_payment > 24 jam & kembalikan stok.
 // Butuh cron di server: * * * * * php artisan schedule:run
-Schedule::command('orders:expire-unpaid')->hourly();
+//
+// Pakai Schedule::call() (BUKAN ::command()): ::command() selalu men-spawn
+// proses PHP terpisah lewat Symfony Process, yang butuh proc_open() - di
+// hosting shared ini proc_open DINONAKTIFKAN, jadi ::command() selalu gagal
+// dengan LogicException sebelum sempat jalan. Schedule::call() menjalankan
+// command DALAM proses schedule:run yang sama, tidak butuh proc_open sama sekali.
+Schedule::call(fn () => Artisan::call('orders:expire-unpaid'))->hourly();
 
 // Backup database harian ke Cloudflare R2 (off-site), simpan 14 hari terakhir.
-Schedule::command('db:backup')->dailyAt('02:00');
+Schedule::call(fn () => Artisan::call('db:backup'))->dailyAt('02:00');

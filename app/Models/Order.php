@@ -11,6 +11,13 @@ class Order extends Model
 {
     use HasFactory;
 
+    /**
+     * Batas waktu pembayaran order pending_payment sebelum dibatalkan otomatis
+     * (lihat ExpireUnpaidOrders / routes/console.php) - satu sumber angka,
+     * dipakai juga untuk menampilkan tenggat ke customer di pesan WA & web.
+     */
+    public const PAYMENT_EXPIRE_HOURS = 24;
+
     protected $fillable = [
         'code',
         'user_id',
