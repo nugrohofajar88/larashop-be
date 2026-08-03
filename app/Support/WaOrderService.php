@@ -157,6 +157,9 @@ class WaOrderService
             ."Nama: \n"
             ."No HP: \n"
             ."Alamat: \n"
+            ."Kelurahan/Desa: \n"
+            ."Kecamatan: \n"
+            ."Kota/Kabupaten: \n"
             ."Pesanan:\n"
             ."- "
         );
@@ -166,6 +169,8 @@ class WaOrderService
         $this->wablas->sendMessage(
             $phone,
             "ℹ️ *Cara mengisi:*\n\n"
+            ."Alamat cukup nama jalan, nomor rumah, & RT/RW. Kelurahan/Desa,\n"
+            ."Kecamatan, Kota/Kabupaten diisi terpisah supaya ongkir & tujuan kirim akurat.\n\n"
             ."Tulis tiap produk + jumlahnya. Contoh:\n"
             ."Pupuk NPK 5 kg x2\n"
             ."Pestisida Organik 1 liter\n\n"
@@ -188,7 +193,7 @@ class WaOrderService
         // seolah pesanannya hilang/tidak terbaca, padahal cuma field lain yang
         // kurang.
         $prev = $session['partial_form'] ?? [];
-        foreach (['name', 'phone', 'address'] as $field) {
+        foreach (['name', 'phone', 'address', 'kelurahan', 'kecamatan', 'kota'] as $field) {
             if ($form[$field] === '' && ($prev[$field] ?? '') !== '') {
                 $form[$field] = $prev[$field];
             }
@@ -204,6 +209,15 @@ class WaOrderService
         if ($form['address'] === '') {
             $missing[] = 'Alamat';
         }
+        if ($form['kelurahan'] === '') {
+            $missing[] = 'Kelurahan/Desa';
+        }
+        if ($form['kecamatan'] === '') {
+            $missing[] = 'Kecamatan';
+        }
+        if ($form['kota'] === '') {
+            $missing[] = 'Kota/Kabupaten';
+        }
         if ($form['items'] === []) {
             $missing[] = 'Pesanan';
         }
@@ -214,8 +228,8 @@ class WaOrderService
 
             // Format kirim-ulang tetap sama seperti biasa, tapi baris Pesanan
             // diisi dengan item yang SUDAH terbaca (kalau ada) — supaya
-            // customer tidak mengira pesanannya hilang, cukup lengkapi Nama/
-            // Alamat lalu kirim ulang persis pesan ini.
+            // customer tidak mengira pesanannya hilang, cukup lengkapi field
+            // yang kurang lalu kirim ulang persis pesan ini.
             $itemLines = $form['items'] !== []
                 ? implode("\n", array_map(fn (string $i): string => "- {$i}", $form['items']))
                 : '- ';
@@ -224,10 +238,15 @@ class WaOrderService
             // begitu saja) supaya customer tahu apa yang diharapkan diisi;
             // field yang sudah terisi tetap ditampilkan apa adanya.
             $nameLine = $form['name'] !== '' ? $form['name'] : 'Nama_pelanggan/penerima';
-            $addressLine = $form['address'] !== '' ? $form['address'] : 'Detail alamat, Kelurahan/Desa, Kecamatan, Kota';
+            $addressLine = $form['address'] !== '' ? $form['address'] : 'Jl./nomor rumah, RT/RW';
+            $kelurahanLine = $form['kelurahan'] !== '' ? $form['kelurahan'] : 'Nama kelurahan/desa';
+            $kecamatanLine = $form['kecamatan'] !== '' ? $form['kecamatan'] : 'Nama kecamatan';
+            $kotaLine = $form['kota'] !== '' ? $form['kota'] : 'Nama kota/kabupaten';
 
             return "Mohon lengkapi: *".implode('*, *', $missing)."*.\n\nKirim ulang dengan format:\n"
-                ."Nama: {$nameLine}\nNo HP: {$form['phone']}\nAlamat: {$addressLine}\nPesanan:\n{$itemLines}";
+                ."Nama: {$nameLine}\nNo HP: {$form['phone']}\nAlamat: {$addressLine}\n"
+                ."Kelurahan/Desa: {$kelurahanLine}\nKecamatan: {$kecamatanLine}\nKota/Kabupaten: {$kotaLine}\n"
+                ."Pesanan:\n{$itemLines}";
         }
 
         // Cocokkan tiap item ke katalog.
@@ -268,8 +287,9 @@ class WaOrderService
         $session['partial_form'] = $form;
         $this->put($phone, $session);
 
-        // Cari wilayah tujuan dari alamat.
-        $dest = $this->resolveDestination($form['address']);
+        // Cari wilayah tujuan dari Kelurahan/Desa + Kecamatan + Kota/Kabupaten
+        // yang diisi terpisah (bukan lagi menebak dari teks alamat bebas).
+        $dest = $this->resolveDestination($form['kelurahan'], $form['kecamatan'], $form['kota']);
 
         if ($dest === null) {
             $session['step'] = 'await_destination';
@@ -494,7 +514,7 @@ class WaOrderService
     /* ----------------------------------------------------------------- */
 
     /**
-     * @return array{name:string,phone:string,address:string,items:array<int,string>}
+     * @return array{name:string,phone:string,address:string,kelurahan:string,kecamatan:string,kota:string,items:array<int,string>}
      */
     protected function parseForm(string $text): array
     {
@@ -513,9 +533,32 @@ class WaOrderService
             $phone = preg_replace('/\D/', '', $m[1]);
         }
 
+        // Alamat/Kelurahan/Kecamatan/Kota dipisah jadi field sendiri-sendiri
+        // (bukan lagi satu blok "Alamat" bebas) supaya pencarian tujuan ongkir
+        // di resolveDestination() tidak perlu menebak-nebak dari prosa alamat.
+        // Tiap field berhenti menangkap pas ketemu label berikutnya (atau akhir
+        // teks), jadi field yang dikosongkan pelanggan tidak "bocor" menangkap
+        // isi baris field selanjutnya.
+        $nextLabel = '(?:kelurahan|desa|kecamatan|kota|kabupaten|pesanan)\b[^\n]*:';
+
         $address = '';
-        if (preg_match('/alamat[ \t]*:[ \t]*(.*?)(?:\n\s*pesanan\s*:|\z)/is', $text, $m)) {
+        if (preg_match('/alamat[ \t]*:[ \t]*(.*?)(?:\n\s*'.$nextLabel.'|\z)/is', $text, $m)) {
             $address = trim(preg_replace('/\s+/', ' ', $m[1]));
+        }
+
+        $kelurahan = '';
+        if (preg_match('/\b(?:kelurahan|desa)\b[^\n:]*:[ \t]*(.*?)(?:\n\s*'.$nextLabel.'|\z)/is', $text, $m)) {
+            $kelurahan = trim(preg_replace('/\s+/', ' ', $m[1]));
+        }
+
+        $kecamatan = '';
+        if (preg_match('/\bkecamatan\b[^\n:]*:[ \t]*(.*?)(?:\n\s*'.$nextLabel.'|\z)/is', $text, $m)) {
+            $kecamatan = trim(preg_replace('/\s+/', ' ', $m[1]));
+        }
+
+        $kota = '';
+        if (preg_match('/\b(?:kota|kabupaten)\b[^\n:]*:[ \t]*(.*?)(?:\n\s*'.$nextLabel.'|\z)/is', $text, $m)) {
+            $kota = trim(preg_replace('/\s+/', ' ', $m[1]));
         }
 
         $items = [];
@@ -537,7 +580,15 @@ class WaOrderService
             }
         }
 
-        return ['name' => $name, 'phone' => (string) $phone, 'address' => $address, 'items' => $items];
+        return [
+            'name' => $name,
+            'phone' => (string) $phone,
+            'address' => $address,
+            'kelurahan' => $kelurahan,
+            'kecamatan' => $kecamatan,
+            'kota' => $kota,
+            'items' => $items,
+        ];
     }
 
     /**
@@ -620,70 +671,22 @@ class WaOrderService
     }
 
     /**
-     * Cari wilayah tujuan dari teks alamat bebas (kode pos -> kecamatan/kota).
+     * Cari wilayah tujuan dari Kelurahan/Desa + Kecamatan + Kota/Kabupaten yang
+     * diisi terpisah oleh pelanggan. Coba dari kombinasi paling presisi (semua
+     * 3) ke paling kasar (kota saja) - jauh lebih akurat daripada menebak dari
+     * teks alamat bebas, karena tidak perlu tebak-tebak mana bagian yang nama
+     * wilayah vs jalan/nomor rumah.
      */
-    protected function resolveDestination(string $address): ?array
+    protected function resolveDestination(string $kelurahan, string $kecamatan, string $kota): ?array
     {
-        $address = trim($address);
+        $candidates = array_values(array_unique(array_filter([
+            trim("{$kelurahan} {$kecamatan} {$kota}"),
+            trim("{$kecamatan} {$kota}"),
+            trim($kota),
+        ])));
 
-        if ($address === '') {
-            return null;
-        }
-
-        // Kumpulkan kandidat keyword dari yang PALING presisi (mengandung nama
-        // kelurahan/kecamatan/kota) ke yang paling kasar. Kode pos sengaja TIDAK
-        // diprioritaskan: satu kode pos mencakup banyak kelurahan, jadi sering
-        // salah ambil. Nama wilayah lebih akurat.
-        $candidates = [];
-
-        // a) Ekstrak via prefix "Kec."/"Kecamatan"/"Kabupaten"/"Kota".
-        if (preg_match('/kec(?:amatan|\.)?\s+([a-z][a-z ]{2,28})/i', $address, $m)) {
-            $candidates[] = trim($m[1]);
-        }
-        if (preg_match('/(?:kab(?:upaten|\.)?|kota)\s+([a-z][a-z ]{2,28})/i', $address, $m)) {
-            $candidates[] = trim($m[1]);
-        }
-
-        // b) Ekor alamat (kelurahan, kecamatan, kota) langsung sebagai keyword —
-        //    seperti pencarian di web. Banyak pelanggan menulis tanpa prefix,
-        //    mis. "Mojokrapak, Tembelang, Jombang". Buang kode pos dari tiap bagian.
-        $provinces = [
-            'aceh', 'sumatera utara', 'sumatera barat', 'riau', 'kepulauan riau', 'jambi',
-            'sumatera selatan', 'bangka belitung', 'kepulauan bangka belitung', 'bengkulu',
-            'lampung', 'dki jakarta', 'jakarta', 'jawa barat', 'banten', 'jawa tengah',
-            'di yogyakarta', 'd.i. yogyakarta', 'yogyakarta', 'jogja', 'jawa timur', 'bali',
-            'nusa tenggara barat', 'ntb', 'nusa tenggara timur', 'ntt', 'kalimantan barat',
-            'kalimantan tengah', 'kalimantan selatan', 'kalimantan timur', 'kalimantan utara',
-            'sulawesi utara', 'gorontalo', 'sulawesi tengah', 'sulawesi barat',
-            'sulawesi selatan', 'sulawesi tenggara', 'maluku', 'maluku utara', 'papua',
-            'papua barat', 'papua selatan', 'papua tengah', 'papua pegunungan',
-            'papua barat daya', 'indonesia',
-        ];
-
-        $parts = array_values(array_filter(
-            array_map(fn (string $p): string => trim(preg_replace('/\b\d{5}\b/', '', $p) ?? ''), explode(',', $address)),
-            fn (string $p): bool => $p !== '' && ! in_array(strtolower($p), $provinces, true),
-        ));
-
-        // Coba jendela 3 lalu 2 bagian terakhir; juga versi yang membuang 1 bagian
-        // terakhir (untuk alamat berakhiran provinsi, mis. "..., Jombang, Jawa Timur").
-        foreach ([[-3, 3], [-2, 2], [-4, 3], [-3, 2]] as [$start, $len]) {
-            $slice = array_slice($parts, $start, $len);
-            if ($slice !== []) {
-                $candidates[] = trim(implode(' ', $slice));
-            }
-        }
-
-        foreach (array_values(array_unique(array_filter($candidates))) as $q) {
+        foreach ($candidates as $q) {
             $r = $this->searchDestinations($q);
-            if ($r !== []) {
-                return $r[0];
-            }
-        }
-
-        // c) Fallback terakhir: kode pos (kurang presisi, ambil hasil pertama di area itu).
-        if (preg_match('/\b(\d{5})\b/', $address, $m)) {
-            $r = $this->searchDestinations($m[1]);
             if ($r !== []) {
                 return $r[0];
             }
