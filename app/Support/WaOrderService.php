@@ -387,6 +387,13 @@ class WaOrderService
         $shippingTotal = (int) ($shipping['price_value'] ?? 0);
         $grandTotal = $itemsTotal + $shippingTotal + $uniqueCode;
 
+        // Estimasi WAJIB ditampilkan (bukan cuma nama kurir) - opsi termurah
+        // yang otomatis kepilih bisa saja cargo, yang jauh lebih lama dari
+        // reguler; customer harus tahu sebelum ketik YA, bukan kaget belakangan.
+        $estimateText = ($shipping['estimate'] ?? '') !== ''
+            ? ', estimasi '.str_ireplace(['days', 'day'], 'hari', $shipping['estimate'])
+            : '';
+
         // COD hanya ditawarkan kalau diaktifkan admin DAN kurir yang kepilih
         // (termurah) memang mendukungnya. Totalnya sengaja TANPA kode unik
         // (kurir menagih tunai, harus angka bulat) — beda dari total transfer
@@ -404,7 +411,7 @@ class WaOrderService
             ."Tujuan: {$dest['label']}\n\n"
             ."{$lines}\n\n"
             ."Subtotal: ".$this->money($itemsTotal)."\n"
-            ."Ongkir ({$shipping['service']}): ".$this->money($shippingTotal)."\n"
+            ."Ongkir ({$shipping['service']}{$estimateText}): ".$this->money($shippingTotal)."\n"
             .($uniqueCode > 0 ? "Kode unik: ".$this->money($uniqueCode)."\n" : '')
             ."*Total: ".$this->money($grandTotal)."*\n\n"
             ."⚠️ *Pastikan TUJUAN di atas sudah benar* — ini yang menentukan ongkir & area pengiriman.\n\n"

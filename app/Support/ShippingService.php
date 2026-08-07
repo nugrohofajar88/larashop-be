@@ -82,9 +82,12 @@ class ShippingService
 
         $options = [];
 
-        // Hanya layanan REGULER (standar parsel). Cargo/instant dilewati —
-        // cargo untuk barang besar, instant intra-kota (belum tentu bisa store order).
-        foreach (['calculate_reguler'] as $group) {
+        // Reguler (standar parsel) + cargo (barang besar/berat, biasanya lebih
+        // murah tapi estimasi kirim lebih lama - makanya field 'estimate' di
+        // bawah WAJIB ditampilkan ke customer sebelum konfirmasi, supaya tidak
+        // kaget kalau yang otomatis kepilih termurah itu cargo). Instant
+        // (intra-kota) tetap dilewati - belum tentu bisa store order.
+        foreach (['calculate_reguler', 'calculate_cargo'] as $group) {
             foreach ((array) $response->json('data.'.$group, []) as $svc) {
                 $priceValue = (int) ($svc['shipping_cost'] ?? 0);
 
