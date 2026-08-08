@@ -74,6 +74,7 @@ class OrderController extends Controller
             'address_id' => ['required', 'integer'],
             'shipping_option_id' => ['required', 'string', 'max:100'],
             'use_unique_code_balance' => ['nullable', 'boolean'],
+            'payment_method' => ['nullable', 'string', 'in:transfer,cod'],
         ]);
 
         $user = $request->user();
@@ -121,17 +122,35 @@ class OrderController extends Controller
             ]);
         }
 
+        // Validasi ulang di server (jangan percaya FE begitu saja): COD cuma
+        // boleh kalau admin aktifkan DAN kurir yang dipilih memang mendukungnya.
+        $isCod = ($validated['payment_method'] ?? 'transfer') === 'cod';
+
+        if ($isCod && (! Setting::paymentCodEnabled() || ! ($selectedShipping['is_cod'] ?? false))) {
+            throw ValidationException::withMessages([
+                'payment_method' => 'COD tidak tersedia untuk layanan pengiriman yang dipilih.',
+            ]);
+        }
+
         $itemsTotal = (int) $selectedItems->sum('subtotal');
         $shippingTotal = (int) ($selectedShipping['price_value'] ?? 0);
-        $uniqueCode = $this->resolveUniqueCode($draftOrder);
-        $availableUniqueCodeBalance = $this->usesUniqueCode() ? $user->uniqueCodeBalance() : 0;
-        $useUniqueCodeBalance = $this->usesUniqueCode()
+        // COD: tanpa kode unik - kurir menagih tunai, harus angka bulat (sama
+        // seperti alur WA).
+        $uniqueCode = $isCod ? 0 : $this->resolveUniqueCode($draftOrder);
+        $availableUniqueCodeBalance = (! $isCod && $this->usesUniqueCode()) ? $user->uniqueCodeBalance() : 0;
+        $useUniqueCodeBalance = ! $isCod
+            && $this->usesUniqueCode()
             && $availableUniqueCodeBalance > 0
             && $request->boolean('use_unique_code_balance');
         $usedUniqueCode = $useUniqueCodeBalance
             ? min($availableUniqueCodeBalance, $itemsTotal + $shippingTotal + $uniqueCode)
             : 0;
         $grandTotal = max(0, $itemsTotal + $shippingTotal + $uniqueCode - $usedUniqueCode);
+        $paymentMethod = $isCod ? 'COD' : 'Transfer manual';
+        $paymentStatus = $isCod ? 'COD - bayar saat barang diterima' : 'Menunggu transfer';
+        $shipmentNote = $isCod
+            ? 'Order (web), bayar COD. Siap dibooking ke ekspedisi.'
+            : 'Menunggu validasi pembayaran sebelum shipment dibuat.';
 
         // retry: lindungi dari race kode order (dua order bersamaan → kode sama).
         // Kalau insert kena duplicate kode, ulang transaksi → generateOrderCode recount.
@@ -145,15 +164,18 @@ class OrderController extends Controller
             $shippingTotal,
             $uniqueCode,
             $usedUniqueCode,
-            $grandTotal
+            $grandTotal,
+            $paymentMethod,
+            $paymentStatus,
+            $shipmentNote
         ): Order {
             $order = Order::query()->create([
                 'code' => $this->generateOrderCode(),
                 'user_id' => $user->id,
                 'customer_address_id' => $address->id,
                 'status' => 'pending_payment',
-                'payment_method' => 'Transfer manual',
-                'payment_status' => 'Menunggu transfer',
+                'payment_method' => $paymentMethod,
+                'payment_status' => $paymentStatus,
                 'items_total' => $itemsTotal,
                 'shipping_total' => $shippingTotal,
                 'shipping_cashback' => (int) ($selectedShipping['cashback_value'] ?? 0),
@@ -164,7 +186,7 @@ class OrderController extends Controller
                 'shipping_courier_code' => $selectedShipping['code'] ?? null,
                 'shipping_service_code' => $selectedShipping['service_code'] ?? null,
                 'shipping_estimate_days' => $selectedShipping['estimate'] ?? null,
-                'shipment_note' => 'Menunggu validasi pembayaran sebelum shipment dibuat.',
+                'shipment_note' => $shipmentNote,
                 'recipient_name' => $address->recipient_name,
                 'recipient_phone' => $address->recipient_phone,
                 'address_label' => $address->label,
@@ -208,6 +230,15 @@ class OrderController extends Controller
 
             return $order->fresh(['items', 'user']);
         }), 50, fn ($e) => $e instanceof \Illuminate\Database\QueryException && str_contains($e->getMessage(), 'orders_code_unique'));
+
+        // Tidak ada apa pun untuk divalidasi (bayar di tempat) -> langsung
+        // tandai paid & auto-booking Komerce. Dipanggil SETELAH transaksi
+        // order commit (sama seperti alur WA) supaya pembuatan order tetap
+        // sukses walau booking ekspedisi gagal.
+        if ($isCod) {
+            app(\App\Support\OrderPaymentService::class)->markPaid($order, 'cod');
+            $order = $order->fresh(['items', 'user']);
+        }
 
         return response()->json([
             'data' => ApiData::order($order),

@@ -97,6 +97,15 @@ class CheckoutController extends Controller
                     ->all(),
                 'shipment_origin' => $shipmentOrigin ? ApiData::shipmentOrigin($shipmentOrigin) : null,
                 'shipping_options' => $shippingOptions,
+                // COD cuma boleh ditawarkan kalau admin aktifkan DAN kurir yang
+                // sedang kepilih memang mendukungnya (field is_cod per opsi di
+                // shipping_options) - pengecekan is_cod dilakukan di FE karena
+                // bisa berubah tiap kali customer ganti pilihan kurir tanpa
+                // perlu roundtrip ke server.
+                'payment_methods' => [
+                    'transfer' => \App\Models\Setting::paymentTransferEnabled(),
+                    'cod' => \App\Models\Setting::paymentCodEnabled(),
+                ],
                 'items' => $selectedItems->map(fn ($item): array => [
                     'name' => $item->product_name,
                     'variant_label' => $item->variant_label,
