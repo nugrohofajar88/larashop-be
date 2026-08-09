@@ -48,6 +48,8 @@ class ExpireUnpaidOrders extends Command
                 $order->logTracking('cancelled', 'system', ['note' => 'Auto-expire pembayaran > '.$hours.' jam']);
             });
 
+            app(\App\Support\OrderCancellationMailer::class)->send($order->fresh(['user']));
+
             $count++;
         }
 

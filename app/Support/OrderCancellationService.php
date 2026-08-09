@@ -47,6 +47,8 @@ class OrderCancellationService
                 ]);
             });
 
+            app(OrderCancellationMailer::class)->send($order->fresh(['user']));
+
             return ['ok' => true, 'message' => 'Order berhasil dibatalkan.'];
         }
 

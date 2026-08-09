@@ -96,6 +96,9 @@ class AdminOrderController extends Controller
             }
         }
 
+        // Simpan sebelum di-update: dipakai untuk isi email pembatalan di bawah.
+        $wasAlreadyPaid = in_array($order->status, ['paid', 'processing'], true);
+
         DB::transaction(function () use ($order, $komerceWarning): void {
             UserUniqueCode::query()
                 ->where('user_id', $order->user_id)
@@ -117,6 +120,8 @@ class AdminOrderController extends Controller
         $order->logTracking('cancelled', 'admin', $komerceWarning ? ['note' => $komerceWarning] : []);
 
         $order->refresh()->load(['items', 'user']);
+
+        app(\App\Support\OrderCancellationMailer::class)->send($order, $wasAlreadyPaid);
 
         return response()->json([
             'data' => ApiData::order($order),
