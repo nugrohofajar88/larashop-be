@@ -35,6 +35,8 @@ Route::prefix('v1')->middleware('throttle:api')->group(function (): void {
     Route::prefix('auth')->group(function (): void {
         Route::post('/login', [AuthController::class, 'login'])->middleware('guest');
         Route::post('/register', [AuthController::class, 'register'])->middleware('guest');
+        Route::post('/forgot-password', [AuthController::class, 'forgotPassword'])->middleware('guest');
+        Route::post('/reset-password', [AuthController::class, 'resetPassword'])->middleware('guest');
     });
 
     Route::get('/store-info', [StoreController::class, 'info']);

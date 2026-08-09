@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\User;
 use App\Support\ApiData;
+use App\Support\PasswordResetService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
@@ -87,6 +88,42 @@ class AuthController extends Controller
                 'user' => ApiData::customer($user),
             ],
         ], 201);
+    }
+
+    public function forgotPassword(Request $request, PasswordResetService $service): JsonResponse
+    {
+        $validated = $request->validate([
+            'login' => ['required', 'string'],
+        ]);
+
+        $service->requestOtp($validated['login']);
+
+        // Selalu pesan generik yang sama, ketemu akun atau tidak - jangan
+        // beri tahu penyerang mana yang akun beneran ada (user enumeration).
+        return response()->json([
+            'message' => 'Kalau akun terdaftar, kode OTP sudah dikirim ke WhatsApp yang terdaftar.',
+        ]);
+    }
+
+    public function resetPassword(Request $request, PasswordResetService $service): JsonResponse
+    {
+        $validated = $request->validate([
+            'login' => ['required', 'string'],
+            'otp' => ['required', 'string'],
+            'password' => ['required', 'confirmed', Password::min(8)->letters()->numbers()],
+        ]);
+
+        $result = $service->resetPassword($validated['login'], $validated['otp'], $validated['password']);
+
+        if (! $result['ok']) {
+            throw ValidationException::withMessages([
+                'otp' => $result['message'],
+            ]);
+        }
+
+        return response()->json([
+            'message' => 'Password berhasil direset. Silakan login dengan password baru.',
+        ]);
     }
 
     public function me(Request $request): JsonResponse
