@@ -3,6 +3,7 @@
 namespace App\Support;
 
 use App\Mail\OrderCancelledMail;
+use App\Models\EmailLog;
 use App\Models\Order;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
@@ -29,10 +30,28 @@ class OrderCancellationNotifier
             return;
         }
 
+        $mailable = new OrderCancelledMail($order, $wasAlreadyPaid);
+        $subject = $mailable->envelope()->subject;
+
         try {
-            Mail::to($email)->send(new OrderCancelledMail($order, $wasAlreadyPaid));
+            Mail::to($email)->send($mailable);
+
+            EmailLog::create([
+                'order_id' => $order->id,
+                'to_email' => $email,
+                'subject' => $subject,
+                'status' => 'sent',
+            ]);
         } catch (Throwable $e) {
             // Gagal kirim email tidak boleh menggagalkan proses pembatalan itu sendiri.
+            EmailLog::create([
+                'order_id' => $order->id,
+                'to_email' => $email,
+                'subject' => $subject,
+                'status' => 'failed',
+                'error' => $e->getMessage(),
+            ]);
+
             Log::warning('order.cancellation_mail.failed', [
                 'order_id' => $order->id,
                 'order_code' => $order->code,
