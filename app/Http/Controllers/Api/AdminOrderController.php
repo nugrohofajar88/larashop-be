@@ -121,7 +121,7 @@ class AdminOrderController extends Controller
 
         $order->refresh()->load(['items', 'user']);
 
-        app(\App\Support\OrderCancellationMailer::class)->send($order, $wasAlreadyPaid);
+        app(\App\Support\OrderCancellationNotifier::class)->send($order, $wasAlreadyPaid);
 
         return response()->json([
             'data' => ApiData::order($order),
