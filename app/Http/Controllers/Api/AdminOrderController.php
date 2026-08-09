@@ -96,9 +96,6 @@ class AdminOrderController extends Controller
             }
         }
 
-        // Simpan sebelum di-update: dipakai untuk keputusan notifikasi WA di bawah.
-        $wasAlreadyPaid = in_array($order->status, ['paid', 'processing'], true);
-
         DB::transaction(function () use ($order, $komerceWarning): void {
             UserUniqueCode::query()
                 ->where('user_id', $order->user_id)
@@ -121,52 +118,10 @@ class AdminOrderController extends Controller
 
         $order->refresh()->load(['items', 'user']);
 
-        // Order yang SUDAH TERBAYAR lalu dibatalkan itu kejadian tidak biasa (butuh
-        // refund/penyesuaian) — beri tahu semua admin via WA, bukan cuma yang klik batal.
-        if ($wasAlreadyPaid) {
-            $this->notifyAdminsOrderCancelled($order, $komerceWarning);
-        }
-
         return response()->json([
             'data' => ApiData::order($order),
             'message' => 'Order berhasil dibatalkan oleh admin.'.($komerceWarning ? ' (Catatan: '.$komerceWarning.')' : ''),
         ]);
-    }
-
-    /** Beri tahu semua admin (role=admin, punya nomor HP) via WA saat order yang SUDAH TERBAYAR dibatalkan. */
-    protected function notifyAdminsOrderCancelled(Order $order, ?string $komerceWarning): void
-    {
-        $normalize = fn (string $raw): string => (function (string $digits): string {
-            return $digits !== '' && str_starts_with($digits, '0') ? '62'.substr($digits, 1) : $digits;
-        })(preg_replace('/\D/', '', $raw) ?? '');
-
-        $admins = \App\Models\User::query()
-            ->where('role', 'admin')
-            ->whereNotNull('phone')
-            ->pluck('phone')
-            ->map(fn ($p) => $normalize((string) $p))
-            ->filter()
-            ->unique()
-            ->values();
-
-        if ($admins->isEmpty()) {
-            return;
-        }
-
-        $actor = auth()->user()?->name ?? 'admin';
-        $customer = $order->user?->name ?? '-';
-        $amount = 'Rp'.number_format((int) $order->grand_total, 0, ',', '.');
-
-        $message = "⚠️ *Pesanan sudah dibayar, tapi dibatalkan*\n"
-            ."Pesanan: *{$order->code}* — {$amount}\n"
-            ."Pelanggan: {$customer}\n"
-            ."Dibatalkan oleh: {$actor}\n"
-            .'Cek apakah perlu refund ke pelanggan.'
-            .($komerceWarning ? "\n\n⚠️ {$komerceWarning}" : '');
-
-        foreach ($admins as $adminPhone) {
-            app(\App\Support\Contracts\WhatsappGateway::class)->sendMessage($adminPhone, $message);
-        }
     }
 
     /** Tolak permintaan pembatalan customer (order tetap berjalan, flag dihapus). */
