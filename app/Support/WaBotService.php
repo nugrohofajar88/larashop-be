@@ -361,6 +361,7 @@ class WaBotService
     protected function listProducts(): string
     {
         $products = Product::query()
+            ->where('public_status', 'active')
             ->with(['variants', 'category'])
             ->orderBy('id')
             ->limit(30)
@@ -430,6 +431,7 @@ class WaBotService
     protected function runSearch(array $terms, bool $matchAny): \Illuminate\Support\Collection
     {
         return Product::query()
+            ->where('public_status', 'active')
             ->whereSearchTerms($terms, $matchAny)
             ->orderBy('id')
             ->limit(20)
@@ -464,7 +466,7 @@ class WaBotService
             }
         }
 
-        $catalog = Product::query()->with(['category', 'variants'])->orderBy('id')->limit(40)->get()
+        $catalog = Product::query()->where('public_status', 'active')->with(['category', 'variants'])->orderBy('id')->limit(40)->get()
             ->map(function (Product $p): string {
                 $category = $p->category->name ?? '-';
                 $desc = $p->short_description
@@ -679,7 +681,7 @@ class WaBotService
 
     protected function productDetail(int $id): string
     {
-        $product = Product::query()->with(['variants', 'category'])->withSoldTotal()->find($id);
+        $product = Product::query()->where('public_status', 'active')->with(['variants', 'category'])->withSoldTotal()->find($id);
 
         if ($product === null) {
             return "❌ Produk dengan ID {$id} tidak ditemukan.\nKetik */katalog* untuk lihat daftar produk.";

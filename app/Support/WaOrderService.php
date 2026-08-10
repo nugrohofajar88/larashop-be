@@ -624,7 +624,7 @@ class WaOrderService
             return null;
         }
 
-        $candidates = Product::query()->with('variants')->whereSearchTerms($words, true)->limit(25)->get();
+        $candidates = Product::query()->where('public_status', 'active')->with('variants')->whereSearchTerms($words, true)->limit(25)->get();
 
         if ($candidates->isEmpty()) {
             return null;
