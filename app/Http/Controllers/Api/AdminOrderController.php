@@ -150,8 +150,11 @@ class AdminOrderController extends Controller
             }
         }
 
-        // Simpan sebelum di-update: dipakai untuk isi email pembatalan di bawah.
-        $wasAlreadyPaid = in_array($order->status, ['paid', 'processing'], true);
+        // Simpan sebelum di-update: dipakai untuk isi email/WA pembatalan di bawah.
+        // COD yang statusnya "paid" itu cuma berarti "dikonfirmasi" - uang belum benar-benar
+        // diterima (baru dibayar saat barang sampai), jadi TIDAK butuh pesan "refund".
+        $wasAlreadyPaid = in_array($order->status, ['paid', 'processing'], true)
+            && $order->payment_method !== 'COD';
 
         DB::transaction(function () use ($order, $komerceWarning): void {
             UserUniqueCode::query()
