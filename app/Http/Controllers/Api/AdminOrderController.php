@@ -62,6 +62,60 @@ class AdminOrderController extends Controller
         ]);
     }
 
+    /**
+     * Coba lagi booking ke Komerce untuk order yang sudah dibayar tapi gagal
+     * di-booking (mis. shipping_cost sempat tidak match karena harga ongkir
+     * live berubah). Aman dipanggil berkali-kali - hanya proses kalau order
+     * belum punya komerce_order_no.
+     */
+    public function retryBooking(Order $order): JsonResponse
+    {
+        if (! in_array($order->status, ['paid', 'processing'], true)) {
+            throw ValidationException::withMessages([
+                'order' => 'Order ini belum dibayar, belum bisa di-booking ke ekspedisi.',
+            ]);
+        }
+
+        if (trim((string) $order->komerce_order_no) !== '') {
+            throw ValidationException::withMessages([
+                'order' => 'Order ini sudah di-booking ke ekspedisi ('.$order->komerce_order_no.').',
+            ]);
+        }
+
+        $komerce = app(KomerceShipmentService::class);
+
+        if (! $komerce->enabled()) {
+            throw ValidationException::withMessages([
+                'order' => 'Integrasi Komerce sedang tidak aktif.',
+            ]);
+        }
+
+        $result = $komerce->createOrder($order);
+        $label = $order->payment_method === 'COD' ? 'Pesanan COD dikonfirmasi' : 'Pembayaran tervalidasi';
+
+        if ($result['ok']) {
+            $order->update([
+                'komerce_order_no' => $result['order_no'] ?? null,
+                'komerce_order_id' => $result['order_id'] ?? null,
+                'cod_service_fee' => (int) ($result['service_fee'] ?? 0),
+                'shipment_note' => $label.'. Order ekspedisi dibuat: '.($result['order_no'] ?? '-').'.',
+            ]);
+        } else {
+            $order->update([
+                'shipment_note' => $label.', tapi booking ekspedisi GAGAL: '.($result['message'] ?? 'tidak diketahui').'. Bisa dicoba ulang.',
+            ]);
+        }
+
+        $order->refresh()->load(['items', 'user']);
+
+        return response()->json([
+            'data' => ApiData::order($order),
+            'message' => $result['ok']
+                ? 'Booking ekspedisi berhasil: '.$order->komerce_order_no
+                : 'Booking ekspedisi masih gagal: '.($result['message'] ?? 'tidak diketahui'),
+        ]);
+    }
+
     public function cancel(Order $order): JsonResponse
     {
         if (! in_array($order->status, ['pending_payment', 'paid', 'processing'], true)) {
