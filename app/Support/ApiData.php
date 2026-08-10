@@ -413,6 +413,7 @@ class ApiData
             // customer masih boleh menekan tombol batal/ajukan batal.
             'cancel_requested' => $order->cancel_requested_at !== null,
             'cancel_requested_at' => $order->cancel_requested_at?->format('Y-m-d H:i'),
+            'cancel_reason' => $order->cancel_reason,
             'can_cancel' => trim((string) $order->awb) === ''
                 && $order->cancel_requested_at === null
                 && in_array($order->status, ['pending_payment', 'paid', 'processing'], true),

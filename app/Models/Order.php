@@ -48,6 +48,7 @@ class Order extends Model
         'paid_at',
         'shipped_at',
         'cancel_requested_at',
+        'cancel_reason',
         'recipient_name',
         'recipient_phone',
         'address_label',

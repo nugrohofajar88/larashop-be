@@ -75,9 +75,11 @@ class OrderCancellationNotifier
         }
 
         $amount = 'Rp'.number_format((int) $order->grand_total, 0, ',', '.');
+        $reason = trim((string) ($order->cancel_reason ?? ''));
 
         $message = "❌ Pesanan *{$order->code}* ({$amount}) sudah *dibatalkan*.\n"
             .'Alasan: '.$order->payment_status
+            .($reason !== '' ? "\n\nKeterangan dari toko: {$reason}" : '')
             .($wasAlreadyPaid
                 ? "\n\nKarena pesanan ini sebelumnya sudah dibayar, tim kami akan segera menghubungimu untuk proses pengembalian dana (refund)."
                 : '');

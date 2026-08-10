@@ -24,6 +24,11 @@ Pesanan kamu berikut ini sudah **dibatalkan**:
 </x-mail::table>
 @endif
 
+@if (! empty($order->cancel_reason))
+**Keterangan dari toko:**
+{{ $order->cancel_reason }}
+@endif
+
 @if ($wasAlreadyPaid)
 Karena pesanan ini **sebelumnya sudah dibayar**, tim kami akan segera menghubungi kamu untuk proses pengembalian dana (refund).
 @endif

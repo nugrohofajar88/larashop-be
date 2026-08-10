@@ -116,13 +116,17 @@ class AdminOrderController extends Controller
         ]);
     }
 
-    public function cancel(Order $order): JsonResponse
+    public function cancel(Request $request, Order $order): JsonResponse
     {
         if (! in_array($order->status, ['pending_payment', 'paid', 'processing'], true)) {
             throw ValidationException::withMessages([
                 'order' => 'Order ini tidak bisa dibatalkan dari sisi admin.',
             ]);
         }
+
+        $reason = trim((string) $request->validate([
+            'reason' => ['nullable', 'string', 'max:500'],
+        ])['reason'] ?? '');
 
         // Kalau order sudah di-booking ke Komerce, batalkan juga di sana supaya kurir
         // tidak tetap menjemput (ghost order). Komerce menolak (422) bila sudah "Dikirim".
@@ -156,7 +160,7 @@ class AdminOrderController extends Controller
         $wasAlreadyPaid = in_array($order->status, ['paid', 'processing'], true)
             && $order->payment_method !== 'COD';
 
-        DB::transaction(function () use ($order, $komerceWarning): void {
+        DB::transaction(function () use ($order, $komerceWarning, $reason): void {
             UserUniqueCode::query()
                 ->where('user_id', $order->user_id)
                 ->where('ref_id', $order->id)
@@ -171,6 +175,7 @@ class AdminOrderController extends Controller
                 'payment_status' => 'Dibatalkan admin',
                 'shipment_note' => 'Order dibatalkan oleh admin dan seluruh penyesuaian saldo sudah dikembalikan.'.($komerceWarning ? ' ⚠️ '.$komerceWarning : ''),
                 'cancel_requested_at' => null,
+                'cancel_reason' => $reason !== '' ? $reason : null,
             ]);
         });
 
