@@ -169,7 +169,8 @@ class AdminDashboardController extends Controller
 
         $stokHabisQuery = $base()->where('stock', '<=', 0);
         $hargaKosongQuery = $base()->where('price', '<=', 0);
-        $beratKosongQuery = $base()->where('weight_grams', '<=', 0);
+        // weight_grams nullable (belum pernah diisi = NULL, bukan 0) - dua-duanya harus ke-detect.
+        $beratKosongQuery = $base()->where(fn ($q) => $q->whereNull('weight_grams')->orWhere('weight_grams', '<=', 0));
 
         return [
             'stok_habis' => [
