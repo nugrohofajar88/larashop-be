@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Order;
 use App\Models\OrderItem;
+use App\Models\ProductVariant;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Carbon;
@@ -144,8 +145,46 @@ class AdminDashboardController extends Controller
                 'status_distribusi' => $statusDistribusi,
                 'produk_terlaris' => $produkTerlaris,
                 'orders_terbaru' => $ordersTerbaru,
+                'catatan_produk' => $this->catatanProduk(),
             ],
         ]);
+    }
+
+    /**
+     * Catatan data produk yang belum lengkap (varian aktif saja - produk nonaktif
+     * tidak bisa dipesan jadi tidak mendesak). Ketahuan dari kasus nyata: varian
+     * tanpa berat bikin booking ekspedisi gagal karena shipping_cost salah hitung.
+     */
+    private function catatanProduk(): array
+    {
+        $base = fn () => ProductVariant::query()
+            ->whereHas('product', fn ($q) => $q->where('public_status', 'active'))
+            ->with('product:id,name,sku');
+
+        $map = fn ($rows) => $rows->map(fn (ProductVariant $v) => [
+            'sku' => $v->product?->sku ?? $v->sku,
+            'product_name' => $v->product?->name ?? '-',
+            'variant_label' => $v->label,
+        ])->all();
+
+        $stokHabisQuery = $base()->where('stock', '<=', 0);
+        $hargaKosongQuery = $base()->where('price', '<=', 0);
+        $beratKosongQuery = $base()->where('weight_grams', '<=', 0);
+
+        return [
+            'stok_habis' => [
+                'count' => (clone $stokHabisQuery)->count(),
+                'items' => $map($stokHabisQuery->orderBy('id')->limit(10)->get()),
+            ],
+            'harga_belum_diset' => [
+                'count' => (clone $hargaKosongQuery)->count(),
+                'items' => $map($hargaKosongQuery->orderBy('id')->limit(10)->get()),
+            ],
+            'berat_belum_diset' => [
+                'count' => (clone $beratKosongQuery)->count(),
+                'items' => $map($beratKosongQuery->orderBy('id')->limit(10)->get()),
+            ],
+        ];
     }
 
     private function rupiah(int $value): string
