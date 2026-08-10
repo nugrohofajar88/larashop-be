@@ -78,9 +78,21 @@ class KomerceShipmentService
         Log::info('komerce.store_order.response', ['order' => $order->code, 'status' => $response->status(), 'body' => $body]);
 
         if (! $response->successful() || ($body['meta']['status'] ?? '') !== 'success') {
+            $message = (string) ($body['meta']['message'] ?? 'Gagal membuat order ekspedisi.');
+
+            // Komerce tidak pernah kasih tahu angka versi mereka di error ini (data selalu
+            // null) - jadi tampilkan minimal angka kita: shipping_cost hasil tarif ULANG
+            // saat booking vs ongkir yang SUDAH DIBAYAR customer saat checkout, supaya
+            // kelihatan kalau memang harga live Komerce yang berubah di antara keduanya.
+            if (str_contains(strtolower($message), 'shipping_cost')) {
+                $sentCost = 'Rp'.number_format((int) $payload['shipping_cost'], 0, ',', '.');
+                $checkoutCost = 'Rp'.number_format((int) $order->shipping_total, 0, ',', '.');
+                $message .= " (shipping_cost yang kami kirim saat booking: {$sentCost}; ongkir yang sudah dibayar customer saat checkout: {$checkoutCost})";
+            }
+
             return [
                 'ok' => false,
-                'message' => (string) ($body['meta']['message'] ?? 'Gagal membuat order ekspedisi.'),
+                'message' => $message,
                 'payload' => $payload,
                 'response' => $body,
             ];
