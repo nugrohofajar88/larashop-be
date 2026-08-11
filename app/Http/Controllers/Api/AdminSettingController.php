@@ -16,6 +16,7 @@ class AdminSettingController extends Controller
                 'store_whatsapp' => Setting::get('store_whatsapp', ''),
                 'store_brand' => Setting::get('store_brand', ''),
                 'store_email' => Setting::get('store_email', ''),
+                'lion_commodity_code' => Setting::get('lion_commodity_code', 'BPI105'),
                 'unique_code_enabled' => Setting::uniqueCodeEnabled(),
                 'payment_transfer_enabled' => Setting::paymentTransferEnabled(),
                 'payment_qris_enabled' => Setting::paymentQrisEnabled(),
@@ -30,6 +31,7 @@ class AdminSettingController extends Controller
             'store_whatsapp' => ['nullable', 'string', 'max:20'],
             'store_brand' => ['nullable', 'string', 'max:100'],
             'store_email' => ['nullable', 'email', 'max:100'],
+            'lion_commodity_code' => ['nullable', 'string', 'max:20'],
             'unique_code_enabled' => ['nullable', 'boolean'],
             'payment_transfer_enabled' => ['nullable', 'boolean'],
             'payment_qris_enabled' => ['nullable', 'boolean'],
@@ -39,6 +41,7 @@ class AdminSettingController extends Controller
         Setting::set('store_whatsapp', $this->normalizeWa((string) ($validated['store_whatsapp'] ?? '')));
         Setting::set('store_brand', trim((string) ($validated['store_brand'] ?? '')));
         Setting::set('store_email', trim((string) ($validated['store_email'] ?? '')));
+        Setting::set('lion_commodity_code', strtoupper(trim((string) ($validated['lion_commodity_code'] ?? ''))) ?: 'BPI105');
         Setting::set('unique_code_enabled', $request->boolean('unique_code_enabled') ? '1' : '0');
         Setting::set('payment_transfer_enabled', $request->boolean('payment_transfer_enabled') ? '1' : '0');
         Setting::set('payment_qris_enabled', $request->boolean('payment_qris_enabled') ? '1' : '0');

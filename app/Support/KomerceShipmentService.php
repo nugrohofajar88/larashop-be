@@ -481,6 +481,11 @@ class KomerceShipmentService
         // grand_total = total produk + ongkir + biaya tambahan (sesuai dokumentasi).
         $grandTotal = (int) $order->items_total + $shippingCost + $additionalCost;
 
+        // LION Parcel wajib commodity_code - kalau tidak dikirim, Komerce diam-diam
+        // fallback ke ABR036 (Aksesoris & Barang Pribadi), salah klasifikasi untuk
+        // produk kita (pupuk/pestisida cair, seharusnya BPI105 - PUPUK/DG).
+        $isLion = strtoupper(trim((string) $tariff['shipping_name'])) === 'LION';
+
         return [
             // Komerce wajib WIB. Dipaksa Asia/Jakarta sbg pengaman: walau APP_TIMEZONE
             // di host lupa di-set (balik UTC), order_date tetap benar, jadi tak kena
@@ -500,6 +505,7 @@ class KomerceShipmentService
             'receiver_email' => (string) ($order->user->email ?? 'customer@akartanikimia.id'),
             'shipping' => (string) $tariff['shipping_name'],
             'shipping_type' => (string) $tariff['service_name'],
+            ...($isLion ? ['commodity_code' => (string) Setting::get('lion_commodity_code', 'BPI105')] : []),
             'payment_method' => $isCod ? 'COD' : 'BANK TRANSFER',
             'shipping_cost' => $shippingCost,
             'shipping_cashback' => (int) $tariff['shipping_cashback'],
