@@ -52,7 +52,28 @@ class OrderCancellationService
             return ['ok' => true, 'message' => 'Order berhasil dibatalkan.'];
         }
 
-        // 2) paid / processing (AWB masih kosong) -> AJUKAN pembatalan, tunggu admin.
+        // 2) COD berstatus "paid" tapi BELUM diproses admin (belum di-booking/pickup,
+        // makanya masih "processing" belum tercapai) -> batal LANGSUNG juga, sama
+        // seperti pending_payment. Uang COD belum benar-benar diterima (baru dibayar
+        // saat barang sampai), jadi tidak ada pembayaran nyata yang perlu ditinjau admin.
+        if ($order->status === 'paid' && $order->payment_method === 'COD') {
+            DB::transaction(function () use ($order): void {
+                app(StockService::class)->releaseForOrder($order);
+
+                $order->update([
+                    'status' => 'cancelled',
+                    'payment_status' => 'Dibatalkan customer',
+                    'shipment_note' => 'Order COD dibatalkan oleh customer sebelum diproses admin.',
+                    'cancel_requested_at' => null,
+                ]);
+            });
+
+            app(OrderCancellationNotifier::class)->send($order->fresh(['user']));
+
+            return ['ok' => true, 'message' => 'Order berhasil dibatalkan.'];
+        }
+
+        // 3) paid (non-COD) / processing (AWB masih kosong) -> AJUKAN pembatalan, tunggu admin.
         if (in_array($order->status, ['paid', 'processing'], true)) {
             if ($order->cancel_requested_at !== null) {
                 return [
@@ -69,7 +90,7 @@ class OrderCancellationService
             return ['ok' => true, 'message' => 'Permintaan pembatalan dikirim. Menunggu konfirmasi admin.'];
         }
 
-        // 3) shipped / completed / cancelled -> tidak bisa.
+        // 4) shipped / completed / cancelled -> tidak bisa.
         return ['ok' => false, 'message' => 'Pesanan ini sudah tidak bisa dibatalkan.'];
     }
 }

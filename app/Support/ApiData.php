@@ -161,16 +161,22 @@ class ApiData
         ];
     }
 
-    public static function orderStatusLabel(string $status): string
+    public static function orderStatusLabel(string $status, ?string $paymentMethod = null): string
     {
+        // COD berstatus "paid" itu artinya baru "dikonfirmasi" - uang belum benar-benar
+        // diterima (dibayar saat barang sampai), jadi label "Sudah dibayar" salah/rancu.
+        if ($status === 'paid' && $paymentMethod === 'COD') {
+            return 'Pembayaran COD';
+        }
+
         return match ($status) {
             'draft' => 'Draft',
             'pending_payment' => 'Menunggu pembayaran',
-            'paid' => 'Paid',
-            'processing' => 'Processing',
-            'shipped' => 'Shipped',
-            'completed' => 'Completed',
-            'cancelled' => 'Cancelled',
+            'paid' => 'Sudah dibayar',
+            'processing' => 'Diproses',
+            'shipped' => 'Dikirim',
+            'completed' => 'Selesai',
+            'cancelled' => 'Dibatalkan',
             default => ucfirst(str_replace('_', ' ', $status)),
         };
     }
@@ -393,7 +399,7 @@ class ApiData
             'code' => $order->code,
             'date' => $order->created_at?->translatedFormat('d F Y') ?? $order->created_at?->format('d M Y'),
             'status' => $order->status,
-            'status_label' => self::orderStatusLabel($order->status),
+            'status_label' => self::orderStatusLabel($order->status, $order->payment_method),
             'total' => self::rupiah($order->grand_total),
             'total_value' => $order->grand_total,
             'customer' => $order->user?->name,

@@ -641,7 +641,7 @@ class WaBotService
             return "Kamu belum punya pesanan yang sedang berjalan. Ketik */pesan* untuk mulai belanja 🌱";
         }
 
-        $lines = $orders->map(fn (Order $o): string => "• *{$o->code}* — ".ApiData::orderStatusLabel($o->status)
+        $lines = $orders->map(fn (Order $o): string => "• *{$o->code}* — ".ApiData::orderStatusLabel($o->status, $o->payment_method)
             ." — ".$this->money((int) $o->grand_total))->implode("\n");
 
         return "📋 *Pesanan Aktifmu*\n\n{$lines}\n\n"
