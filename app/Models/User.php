@@ -61,16 +61,17 @@ class User extends Authenticatable
 
     public function uniqueCodeBalance(): int
     {
-        // Hanya kode unik dari order yang pembayarannya SUDAH tervalidasi
-        // (orders.paid_at terisi) yang dihitung sebagai saldo yang bisa dipakai.
-        // Order yang masih pending_payment tidak menambah saldo.
+        // Saldo baru benar-benar "milik" customer kalau order-nya sudah COMPLETED
+        // (customer sudah konfirmasi terima barang) - bukan cuma paid_at terisi.
+        // Order yang dibatalkan SETELAH dibayar (dapat refund) tidak boleh tetap
+        // menyumbang saldo, walau paid_at-nya tidak pernah dihapus.
         $incoming = (int) $this->uniqueCodeLedger()
             ->where('type', 'paid')
             ->whereExists(function ($query): void {
                 $query->selectRaw('1')
                     ->from('orders')
                     ->whereColumn('orders.id', 'user_unique_codes.ref_id')
-                    ->whereNotNull('orders.paid_at');
+                    ->where('orders.status', 'completed');
             })
             ->sum('value');
 
