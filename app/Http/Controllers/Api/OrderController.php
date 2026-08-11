@@ -142,10 +142,13 @@ class OrderController extends Controller
             && $this->usesUniqueCode()
             && $availableUniqueCodeBalance > 0
             && $request->boolean('use_unique_code_balance');
+        // Saldo cuma boleh potong produk + kode unik - ongkir HARUS selalu utuh
+        // sesuai tarif Komerce, supaya tidak ada urusan hitung ulang/mismatch
+        // saat booking ekspedisi.
         $usedUniqueCode = $useUniqueCodeBalance
-            ? min($availableUniqueCodeBalance, $itemsTotal + $shippingTotal + $uniqueCode)
+            ? min($availableUniqueCodeBalance, $itemsTotal + $uniqueCode)
             : 0;
-        $grandTotal = max(0, $itemsTotal + $shippingTotal + $uniqueCode - $usedUniqueCode);
+        $grandTotal = max(0, $itemsTotal + $uniqueCode - $usedUniqueCode) + $shippingTotal;
         $paymentMethod = $isCod ? 'COD' : 'Transfer manual';
         $paymentStatus = $isCod ? 'COD - bayar saat barang diterima' : 'Menunggu transfer';
         $shipmentNote = $isCod

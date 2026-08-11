@@ -65,11 +65,14 @@ class CheckoutController extends Controller
         $useUniqueCodeBalance = $this->usesUniqueCode()
             && $availableUniqueCodeBalance > 0
             && filter_var($validated['use_unique_code_balance'] ?? false, FILTER_VALIDATE_BOOL);
-        $payableBeforeBalance = $itemsTotal + $shippingTotal + $uniqueCode;
+        // Saldo cuma boleh potong produk + kode unik - ongkir HARUS selalu utuh
+        // sesuai tarif Komerce, supaya tidak ada urusan hitung ulang/mismatch
+        // saat booking ekspedisi.
+        $payableBeforeBalance = $itemsTotal + $uniqueCode;
         $usedUniqueCode = $useUniqueCodeBalance
             ? min($availableUniqueCodeBalance, $payableBeforeBalance)
             : 0;
-        $grandTotal = max(0, $payableBeforeBalance - $usedUniqueCode);
+        $grandTotal = max(0, $payableBeforeBalance - $usedUniqueCode) + $shippingTotal;
 
         if ($order !== null) {
             $order->update([
