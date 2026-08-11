@@ -399,8 +399,8 @@ class WaOrderService
         // (kurir menagih tunai, harus angka bulat) — beda dari total transfer
         // di atas kalau kode unik aktif.
         $codLine = '';
-        if (\App\Models\Setting::paymentCodEnabled() && ($shipping['is_cod'] ?? false)) {
-            $codTotal = $itemsTotal + $shippingTotal;
+        $codTotal = $itemsTotal + $shippingTotal;
+        if (\App\Models\Setting::paymentCodEnabled() && ($shipping['is_cod'] ?? false) && $codTotal <= \App\Models\Setting::codMaxAmount()) {
             $codLine = "• Bayar di tempat? Ketik *COD* — kurir menagih tunai ".$this->money($codTotal)." saat barang diterima (tanpa kode unik).\n";
         }
 
@@ -451,8 +451,16 @@ class WaOrderService
         if ($isCod) {
             // State bisa berubah sejak quote dibuat (admin matikan COD, dll) —
             // cek ulang sebelum benar-benar dipakai.
+            $codItemsTotal = (int) collect($session['items'] ?? [])->sum(fn (array $i): int => $i['price'] * $i['qty']);
+            $codShippingTotal = (int) ($session['shipping']['price_value'] ?? 0);
+
             if (! \App\Models\Setting::paymentCodEnabled() || ! ($session['shipping']['is_cod'] ?? false)) {
                 return "Maaf, COD tidak/belum tersedia untuk pesanan ini. Balas *YA* untuk lanjut dengan Transfer/QRIS, atau *batal* untuk membatalkan.";
+            }
+
+            if (($codItemsTotal + $codShippingTotal) > \App\Models\Setting::codMaxAmount()) {
+                return "Maaf, COD cuma tersedia untuk total belanja sampai dengan ".$this->money(\App\Models\Setting::codMaxAmount())
+                    .". Balas *YA* untuk lanjut dengan Transfer/QRIS, atau *batal* untuk membatalkan.";
             }
 
             // COD: tanpa kode unik — kurir menagih tunai, harus angka bulat.

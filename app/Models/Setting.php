@@ -44,4 +44,10 @@ class Setting extends Model
     {
         return filter_var(static::get('payment_cod_enabled', '0'), FILTER_VALIDATE_BOOLEAN);
     }
+
+    /** Batas maksimal total (produk + ongkir) yang boleh COD. Default Rp5.000.000. */
+    public static function codMaxAmount(): int
+    {
+        return (int) static::get('cod_max_amount', '5000000');
+    }
 }

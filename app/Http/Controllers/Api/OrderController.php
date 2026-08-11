@@ -134,6 +134,12 @@ class OrderController extends Controller
 
         $itemsTotal = (int) $selectedItems->sum('subtotal');
         $shippingTotal = (int) ($selectedShipping['price_value'] ?? 0);
+
+        if ($isCod && ($itemsTotal + $shippingTotal) > Setting::codMaxAmount()) {
+            throw ValidationException::withMessages([
+                'payment_method' => 'COD cuma tersedia untuk total belanja sampai dengan Rp'.number_format(Setting::codMaxAmount(), 0, ',', '.').'. Silakan pilih transfer manual.',
+            ]);
+        }
         // COD: tanpa kode unik - kurir menagih tunai, harus angka bulat (sama
         // seperti alur WA).
         $uniqueCode = $isCod ? 0 : $this->resolveUniqueCode($draftOrder);

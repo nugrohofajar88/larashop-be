@@ -108,6 +108,7 @@ class CheckoutController extends Controller
                 'payment_methods' => [
                     'transfer' => \App\Models\Setting::paymentTransferEnabled(),
                     'cod' => \App\Models\Setting::paymentCodEnabled(),
+                    'cod_max_amount' => \App\Models\Setting::codMaxAmount(),
                 ],
                 'items' => $selectedItems->map(fn ($item): array => [
                     'name' => $item->product_name,
