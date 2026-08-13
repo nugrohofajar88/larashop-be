@@ -42,7 +42,7 @@ class AdminCustomerController extends Controller
     {
         abort_unless($customer->role === 'customer', 404);
 
-        $customer->load('addresses');
+        $customer->load(['addresses', 'uniqueCodeLedger.order']);
 
         return response()->json([
             'data' => ApiData::adminCustomer($customer),

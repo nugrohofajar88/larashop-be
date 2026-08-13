@@ -9,6 +9,7 @@ use App\Models\ProductVariant;
 use App\Models\ShipmentOrigin;
 use App\Models\ShippingService;
 use App\Models\User;
+use App\Models\UserUniqueCode;
 
 class ApiData
 {
@@ -361,6 +362,24 @@ class ApiData
             'unique_code_balance_value' => $uniqueCodeBalance,
             'addresses' => $user->relationLoaded('addresses')
                 ? $user->addresses->sortByDesc('is_primary')->values()->map(fn (CustomerAddress $address) => self::address($address))->all()
+                : [],
+            // Riwayat lengkap penerimaan ("paid") & penggunaan ("used") saldo -
+            // hanya diisi kalau relasinya sengaja di-load (halaman detail), supaya
+            // daftar customer tidak N+1.
+            'balance_ledger' => $user->relationLoaded('uniqueCodeLedger')
+                ? $user->uniqueCodeLedger->sortByDesc('id')->values()->map(fn (UserUniqueCode $entry): array => [
+                    'type' => $entry->type,
+                    'type_label' => $entry->type === 'used' ? 'Penggunaan' : 'Penerimaan',
+                    'value' => self::rupiah($entry->value),
+                    'value_signed' => ($entry->type === 'used' ? '-' : '+').self::rupiah($entry->value),
+                    'date' => $entry->created_at?->translatedFormat('d M Y, H:i'),
+                    'order_code' => $entry->order?->code,
+                    'order_status' => $entry->order?->status,
+                    // Saldo "paid" baru dihitung ke total kalau order-nya sudah completed
+                    // (lihat User::uniqueCodeBalance) - ini beri tahu admin mana yang masih
+                    // menunggu, bukan sekadar daftar mentah.
+                    'counted' => $entry->type === 'used' || $entry->order?->status === 'completed',
+                ])->all()
                 : [],
         ];
     }

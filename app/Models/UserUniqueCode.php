@@ -29,4 +29,10 @@ class UserUniqueCode extends Model
     {
         return $this->belongsTo(User::class);
     }
+
+    /** ref_id menyimpan orders.id secara mentah (bukan FK bernama order_id). */
+    public function order(): BelongsTo
+    {
+        return $this->belongsTo(Order::class, 'ref_id');
+    }
 }
