@@ -44,14 +44,15 @@ class AdminAccountingController extends Controller
         $rows = $orders->map(function (Order $order) use ($mode): array {
             $gross = (int) $order->grand_total;
             $itemsTotal = (int) $order->items_total;
+            $shippingTotal = (int) $order->shipping_total;
             $codServiceFee = (int) $order->cod_service_fee;
             $shippingCashback = (int) $order->shipping_cashback;
-            // items_total dikeluarkan supaya "net" murni mencerminkan untung/rugi
-            // di sisi ongkir & COD (fee + cashback) - bukan tercampur nilai produk,
-            // yang bikin net selalu besar & CUAN/BONCOS jadi tidak berarti apa-apa.
+            // items_total & shipping_total dikeluarkan - keduanya cuma "lewat" (nilai
+            // produk & ongkir buat bayar kurir), bukan keuntungan penjual. "net" jadi
+            // murni cerminan dampak fee COD & cashback (+ sisa kode unik) saja.
             $net = $mode === 'buyer'
-                ? $gross - $itemsTotal - $codServiceFee
-                : $gross - $itemsTotal - $codServiceFee + $shippingCashback;
+                ? $gross - $itemsTotal - $shippingTotal - $codServiceFee
+                : $gross - $itemsTotal - $shippingTotal - $codServiceFee + $shippingCashback;
 
             return [
                 'code' => $order->code,
