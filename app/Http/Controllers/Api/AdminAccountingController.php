@@ -95,6 +95,19 @@ class AdminAccountingController extends Controller
         $cuanCount = collect($rows)->where('status', 'CUAN')->count();
         $impasCount = collect($rows)->where('status', 'IMPAS')->count();
 
+        // Snapshot real-time (BUKAN scoped ke bulan/filter di atas) - order COD yang
+        // masih "shipped" (dikirim, belum ditandai selesai). Uangnya masih dipegang
+        // kurir & belum diremit. Formula ini nyocokin persis ke "Potential Income" di
+        // dashboard RajaOngkir/Komerce: ongkir tidak ikut diremit (tetap punya kurir),
+        // sementara cashback ongkir ikut ditambahkan.
+        $inTransitCod = Order::query()
+            ->where('payment_method', 'COD')
+            ->where('status', 'shipped')
+            ->get(['grand_total', 'shipping_total', 'cod_service_fee', 'shipping_cashback']);
+
+        $potentialIncome = (int) $inTransitCod->sum(fn (Order $o): int => $o->grand_total - $o->shipping_total - $o->cod_service_fee + $o->shipping_cashback
+        );
+
         return response()->json([
             'data' => $rows,
             'meta' => [
@@ -116,6 +129,9 @@ class AdminAccountingController extends Controller
                 'total_cod_service_fee_value' => (int) $orders->sum('cod_service_fee'),
                 'total_items' => ApiData::rupiah((int) $orders->sum('items_total')),
                 'total_items_value' => (int) $orders->sum('items_total'),
+                'potential_income' => ApiData::rupiah($potentialIncome),
+                'potential_income_value' => $potentialIncome,
+                'potential_income_count' => $inTransitCod->count(),
             ],
         ]);
     }
