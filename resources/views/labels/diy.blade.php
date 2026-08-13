@@ -25,6 +25,7 @@
         .wrap { word-wrap: break-word; }
         .bc { padding: 0 2mm 1.6mm; text-align: center; }
         .bc div { display: inline-block; }
+        .bc-sm svg, .bc-sm img { max-height: 9mm; }
     </style>
 </head>
 <body>
@@ -47,50 +48,34 @@
     </table>
     <div class="divider"></div>
 
-    {{-- No Resi + barcode --}}
+    {{-- No Resi (1 baris) + barcode kecil --}}
     <div class="p center">
-        <div class="lbl">No. Resi</div>
-        <div class="resi">{{ $awb }}</div>
+        <div class="small"><span class="lbl">No. Resi:</span> <span class="b">{{ $awb }}</span></div>
     </div>
     @if ($barcode !== '')
-        <div class="bc">{!! $barcode !!}</div>
+        <div class="bc bc-sm">{!! $barcode !!}</div>
     @endif
     <div class="divider"></div>
 
-    {{-- Layanan / Berat / Qty --}}
-    <table>
-        <tr>
-            <td class="p" style="width:34%; border-right:1px solid #111;">
-                <div class="lbl">Layanan</div><div class="b">{{ $service }}</div>
-            </td>
-            <td class="p" style="width:33%; border-right:1px solid #111;">
-                <div class="lbl">Berat</div><div class="b">{{ $weight }} Kg</div>
-            </td>
-            <td class="p" style="width:33%;">
-                <div class="lbl">Qty</div><div class="b">{{ $totalQty }} pcs</div>
-            </td>
-        </tr>
-    </table>
-    <div class="divider"></div>
-
-    {{-- Pengirim --}}
-    <div class="p wrap">
-        <div class="lbl">Pengirim</div>
-        <div class="b">{{ $sender['name'] }}</div>
-        <div class="small">{{ $sender['phone'] }}</div>
-        <div class="small mt1">{{ $sender['address'] }}</div>
+    {{-- Layanan / Berat / Qty (1 baris) --}}
+    <div class="p small">
+        <span class="lbl">Layanan:</span> <span class="b">{{ $service }}</span>
+        &nbsp;|&nbsp; <span class="lbl">Berat:</span> <span class="b">{{ $weight }} Kg</span>
+        &nbsp;|&nbsp; <span class="lbl">Qty:</span> <span class="b">{{ $totalQty }} pcs</span>
     </div>
     <div class="divider"></div>
 
-    {{-- Penerima --}}
+    {{-- Pengirim (1 baris) --}}
+    <div class="p small wrap">
+        <span class="lbl">Pengirim:</span> <span class="b">{{ $sender['name'] }}</span>
+        ({{ $sender['phone'] }}{{ $sender['city'] !== '' ? ' - '.$sender['city'] : '' }})
+    </div>
+    <div class="divider"></div>
+
+    {{-- Penerima: nama+telp 1 baris, alamat baris berikut --}}
     <div class="p wrap">
-        <div class="lbl">Penerima</div>
-        <div class="title">{{ $receiver['name'] }}</div>
-        <div class="small b">{{ $receiver['phone'] }}</div>
-        <div class="small mt1">{{ $receiver['address'] }}</div>
-        @if ($receiver['region'] !== '')
-            <div class="small">{{ $receiver['region'] }}</div>
-        @endif
+        <div class="small"><span class="lbl">Penerima:</span> <span class="b">{{ $receiver['name'] }}</span> ({{ $receiver['phone'] }})</div>
+        <div class="small mt1">{{ $receiver['address'] }}{{ $receiver['region'] !== '' ? ', '.$receiver['region'] : '' }}</div>
     </div>
     <div class="divider"></div>
 

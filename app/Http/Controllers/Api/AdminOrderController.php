@@ -571,7 +571,7 @@ class AdminOrderController extends Controller
         $barcode = '';
         if ($awb !== '') {
             $barcode = (new \Picqer\Barcode\BarcodeGeneratorHTML())
-                ->getBarcode($awb, \Picqer\Barcode\BarcodeGeneratorHTML::TYPE_CODE_128, 2, 48);
+                ->getBarcode($awb, \Picqer\Barcode\BarcodeGeneratorHTML::TYPE_CODE_128, 2, 32);
         }
 
         $logoFile = public_path('img/label-logo.png');
@@ -592,6 +592,7 @@ class AdminOrderController extends Controller
                 'name' => (string) ($origin->contact_name ?? '-'),
                 'phone' => (string) ($origin->contact_phone ?? '-'),
                 'address' => (string) ($origin->address_line ?? '-'),
+                'city' => (string) ($origin->city ?? ''),
             ],
             'receiver' => [
                 'name' => (string) ($order->recipient_name ?: ($address->recipient_name ?? '-')),
