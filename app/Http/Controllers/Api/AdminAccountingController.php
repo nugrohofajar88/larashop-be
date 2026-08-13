@@ -56,7 +56,8 @@ class AdminAccountingController extends Controller
 
             return [
                 'code' => $order->code,
-                'date' => ($order->paid_at ?? $order->created_at)?->translatedFormat('d M Y'),
+                'awb' => $order->awb,
+                'date' => ($order->paid_at ?? $order->created_at)?->translatedFormat('d M Y, H:i'),
                 'payment_method' => $order->payment_method,
                 'gross' => ApiData::rupiah($gross),
                 'gross_value' => $gross,
