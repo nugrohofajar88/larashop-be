@@ -15,11 +15,22 @@ use Illuminate\Validation\ValidationException;
 
 class AdminCustomerController extends Controller
 {
+    /** Status yang dihitung sebagai "sudah belanja" (sama seperti AdminDashboardController). */
+    private const PAID_STATUSES = ['paid', 'processing', 'shipped', 'completed'];
+
+    private function withOrderStats($query)
+    {
+        return $query
+            ->withCount(['orders as total_orders' => fn ($q) => $q->where('status', '!=', 'draft')])
+            ->withSum(['orders as total_spent_sum' => fn ($q) => $q->whereIn('status', self::PAID_STATUSES)], 'grand_total')
+            ->withMax(['orders as last_order_at' => fn ($q) => $q->where('status', '!=', 'draft')], 'created_at');
+    }
+
     public function index(Request $request): JsonResponse
     {
-        $customers = User::query()
-            ->where('role', 'customer')
-            ->withCount('addresses');
+        $customers = $this->withOrderStats(
+            User::query()->where('role', 'customer')->withCount('addresses')
+        );
         $search = trim($request->string('search')->toString());
 
         if ($search !== '') {
@@ -42,7 +53,11 @@ class AdminCustomerController extends Controller
     {
         abort_unless($customer->role === 'customer', 404);
 
-        $customer->load(['addresses', 'uniqueCodeLedger.order']);
+        // Route model binding sudah resolve $customer tanpa agregat order - ambil
+        // ulang lewat query yang sama dgn index() supaya statistiknya konsisten.
+        $customer = $this->withOrderStats(User::query()->whereKey($customer->id))
+            ->with(['addresses', 'uniqueCodeLedger.order'])
+            ->firstOrFail();
 
         return response()->json([
             'data' => ApiData::adminCustomer($customer),

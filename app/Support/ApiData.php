@@ -360,6 +360,13 @@ class ApiData
             'address_count' => $user->addresses_count ?? $user->addresses->count(),
             'unique_code_balance' => self::rupiah($uniqueCodeBalance),
             'unique_code_balance_value' => $uniqueCodeBalance,
+            'joined_at' => $user->created_at?->translatedFormat('d M Y') ?? '-',
+            'total_orders' => (int) ($user->total_orders ?? 0),
+            'total_spent' => self::rupiah((int) ($user->total_spent_sum ?? 0)),
+            'total_spent_value' => (int) ($user->total_spent_sum ?? 0),
+            'last_order' => $user->last_order_at
+                ? \Illuminate\Support\Carbon::parse($user->last_order_at)->translatedFormat('d M Y')
+                : '-',
             'addresses' => $user->relationLoaded('addresses')
                 ? $user->addresses->sortByDesc('is_primary')->values()->map(fn (CustomerAddress $address) => self::address($address))->all()
                 : [],
