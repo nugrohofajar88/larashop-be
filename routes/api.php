@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Api\AdminAccountController;
+use App\Http\Controllers\Api\AdminAccountingController;
 use App\Http\Controllers\Api\AdminCategoryController;
 use App\Http\Controllers\Api\AdminCustomerController;
 use App\Http\Controllers\Api\AdminDashboardController;
@@ -78,6 +79,7 @@ Route::prefix('v1')->middleware('throttle:api')->group(function (): void {
 
     Route::prefix('admin')->middleware(['auth:sanctum', 'role:admin'])->group(function (): void {
         Route::get('/dashboard', [AdminDashboardController::class, 'index']);
+        Route::get('/accounting', [AdminAccountingController::class, 'index']);
         Route::get('/accounts', [AdminAccountController::class, 'index']);
         Route::post('/accounts', [AdminAccountController::class, 'store']);
         Route::get('/accounts/{account}', [AdminAccountController::class, 'show']);
