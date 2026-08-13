@@ -14,12 +14,23 @@ class AdminAccountingController extends Controller
     /** Status yang dihitung sebagai transaksi nyata (uangnya beneran masuk). */
     private const PAID_STATUSES = ['paid', 'processing', 'shipped', 'completed'];
 
+    /** Mapping filter payment_method (query) -> nilai asli kolom orders.payment_method. */
+    private const PAYMENT_METHODS = [
+        'cod' => 'COD',
+        'transfer' => 'Transfer manual',
+        'qris' => 'QRIS',
+    ];
+
     public function index(Request $request): JsonResponse
     {
         $month = trim((string) $request->query('month', ''));
         // seller (default) = cashback ongkir tetap jadi keuntungan penjual.
         // buyer = cashback dikasihkan ke pembeli, jadi TIDAK ikut nambah net penjual.
         $mode = $request->query('mode') === 'buyer' ? 'buyer' : 'seller';
+        $paymentMethod = $request->query('payment_method', 'all');
+        if (! array_key_exists($paymentMethod, self::PAYMENT_METHODS)) {
+            $paymentMethod = 'all';
+        }
 
         try {
             $anchor = $month !== '' ? Carbon::createFromFormat('Y-m', $month) : Carbon::now();
@@ -38,6 +49,7 @@ class AdminAccountingController extends Controller
         $orders = Order::query()
             ->whereIn('status', self::PAID_STATUSES)
             ->whereRaw("$revenueDate BETWEEN ? AND ?", [$start, $end])
+            ->when($paymentMethod !== 'all', fn ($query) => $query->where('payment_method', self::PAYMENT_METHODS[$paymentMethod]))
             ->orderByRaw($revenueDate.' DESC')
             ->get();
 
@@ -89,6 +101,7 @@ class AdminAccountingController extends Controller
                 'month' => $anchor->format('Y-m'),
                 'month_label' => $anchor->translatedFormat('F Y'),
                 'mode' => $mode,
+                'payment_method' => $paymentMethod,
                 'count' => $orders->count(),
                 'cuan_count' => $cuanCount,
                 'impas_count' => $impasCount,
