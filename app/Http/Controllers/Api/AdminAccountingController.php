@@ -47,12 +47,14 @@ class AdminAccountingController extends Controller
             $shippingTotal = (int) $order->shipping_total;
             $codServiceFee = (int) $order->cod_service_fee;
             $shippingCashback = (int) $order->shipping_cashback;
-            // items_total & shipping_total dikeluarkan - keduanya cuma "lewat" (nilai
-            // produk & ongkir buat bayar kurir), bukan keuntungan penjual. "net" jadi
-            // murni cerminan dampak fee COD & cashback (+ sisa kode unik) saja.
+            $uniqueCode = (int) $order->unique_code;
+            // items_total, shipping_total, & unique_code dikeluarkan - ketiganya bukan
+            // keuntungan penjual (nilai produk, ongkir buat bayar kurir, dan kode unik
+            // yang ujungnya jadi saldo/milik pembeli). "net" jadi murni cerminan dampak
+            // fee COD & cashback saja.
             $net = $mode === 'buyer'
-                ? $gross - $itemsTotal - $shippingTotal - $codServiceFee
-                : $gross - $itemsTotal - $shippingTotal - $codServiceFee + $shippingCashback;
+                ? $gross - $itemsTotal - $shippingTotal - $codServiceFee - $uniqueCode
+                : $gross - $itemsTotal - $shippingTotal - $codServiceFee + $shippingCashback - $uniqueCode;
 
             return [
                 'code' => $order->code,
@@ -69,14 +71,17 @@ class AdminAccountingController extends Controller
                 'cod_service_fee_value' => $codServiceFee,
                 'shipping_cashback' => ApiData::rupiah($shippingCashback),
                 'shipping_cashback_value' => $shippingCashback,
+                'unique_code_pembeli' => ApiData::rupiah($uniqueCode),
+                'unique_code_pembeli_value' => $uniqueCode,
                 'net' => ApiData::rupiah($net),
                 'net_value' => $net,
-                'status' => $net > 0 ? 'CUAN' : 'BONCOS',
+                'status' => $net > 0 ? 'CUAN' : ($net < 0 ? 'BONCOS' : 'IMPAS'),
             ];
         })->values()->all();
 
         $totalNet = collect($rows)->sum('net_value');
         $cuanCount = collect($rows)->where('status', 'CUAN')->count();
+        $impasCount = collect($rows)->where('status', 'IMPAS')->count();
 
         return response()->json([
             'data' => $rows,
@@ -86,7 +91,8 @@ class AdminAccountingController extends Controller
                 'mode' => $mode,
                 'count' => $orders->count(),
                 'cuan_count' => $cuanCount,
-                'boncos_count' => $orders->count() - $cuanCount,
+                'impas_count' => $impasCount,
+                'boncos_count' => $orders->count() - $cuanCount - $impasCount,
                 'total_net' => ApiData::rupiah((int) $totalNet),
                 'total_net_value' => (int) $totalNet,
                 'total_shipping_fee' => ApiData::rupiah((int) $orders->sum('shipping_total')),
