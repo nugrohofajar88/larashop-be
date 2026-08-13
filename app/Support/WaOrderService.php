@@ -640,6 +640,13 @@ class WaOrderService
 
         $best = null;
         $bestScore = 0;
+        // Bobot per panjang kata (bukan hitung kata polos) - kata umum yang dipakai
+        // banyak produk sejenis (mis. "zpt", "1000ppm") jangan sampai cukup buat
+        // "menang" sendirian kalau kata paling spesifik (nama bahan aktif, mis.
+        // "triacontanol") justru TIDAK match produk manapun. Ketahuan dari kasus
+        // nyata: order "zpt triacontanol 1000ppm" ke-match ke "ZPT CPPU 1000ppm"
+        // (produk lain) padahal "triacontanol" tidak ada di produk manapun.
+        $totalWeight = array_sum(array_map('strlen', $words));
 
         foreach ($candidates as $p) {
             $variants = $p->variants->isNotEmpty() ? $p->variants->all() : [null];
@@ -647,12 +654,13 @@ class WaOrderService
             foreach ($variants as $v) {
                 // Hanya nama produk + label varian (SKU dilewati supaya angka di
                 // kode SKU tidak menimbulkan kecocokan palsu, mis. "1 kg" vs "5 kg").
-                $hay = strtolower($p->name.' '.($v->label ?? ''));
+                // Spasi dibuang biar "100 ml" di database cocok dgn "100ml" dari customer.
+                $hay = str_replace(' ', '', strtolower($p->name.' '.($v->label ?? '')));
                 $score = 0;
 
                 foreach ($words as $w) {
                     if (str_contains($hay, $w)) {
-                        $score++;
+                        $score += strlen($w);
                     }
                 }
 
@@ -663,7 +671,7 @@ class WaOrderService
             }
         }
 
-        if ($best === null || $bestScore < max(1, (int) ceil(count($words) / 2))) {
+        if ($best === null || $bestScore < max(2, (int) ceil($totalWeight / 2))) {
             return null;
         }
 
