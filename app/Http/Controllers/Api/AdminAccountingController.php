@@ -17,6 +17,9 @@ class AdminAccountingController extends Controller
     public function index(Request $request): JsonResponse
     {
         $month = trim((string) $request->query('month', ''));
+        // seller (default) = cashback ongkir tetap jadi keuntungan penjual.
+        // buyer = cashback dikasihkan ke pembeli, jadi TIDAK ikut nambah net penjual.
+        $mode = $request->query('mode') === 'buyer' ? 'buyer' : 'seller';
 
         try {
             $anchor = $month !== '' ? Carbon::createFromFormat('Y-m', $month) : Carbon::now();
@@ -38,11 +41,13 @@ class AdminAccountingController extends Controller
             ->orderByRaw($revenueDate.' DESC')
             ->get();
 
-        $rows = $orders->map(function (Order $order): array {
+        $rows = $orders->map(function (Order $order) use ($mode): array {
             $gross = (int) $order->grand_total;
             $codServiceFee = (int) $order->cod_service_fee;
             $shippingCashback = (int) $order->shipping_cashback;
-            $net = $gross - $codServiceFee + $shippingCashback;
+            $net = $mode === 'buyer'
+                ? $gross - $codServiceFee
+                : $gross - $codServiceFee + $shippingCashback;
 
             return [
                 'code' => $order->code,
@@ -60,12 +65,20 @@ class AdminAccountingController extends Controller
             ];
         })->values()->all();
 
+        $totalNet = collect($rows)->sum('net_value');
+        $cuanCount = collect($rows)->where('status', 'CUAN')->count();
+
         return response()->json([
             'data' => $rows,
             'meta' => [
                 'month' => $anchor->format('Y-m'),
                 'month_label' => $anchor->translatedFormat('F Y'),
+                'mode' => $mode,
                 'count' => $orders->count(),
+                'cuan_count' => $cuanCount,
+                'boncos_count' => $orders->count() - $cuanCount,
+                'total_net' => ApiData::rupiah((int) $totalNet),
+                'total_net_value' => (int) $totalNet,
                 'total_shipping_fee' => ApiData::rupiah((int) $orders->sum('shipping_total')),
                 'total_shipping_fee_value' => (int) $orders->sum('shipping_total'),
                 'total_cashback' => ApiData::rupiah((int) $orders->sum('shipping_cashback')),
