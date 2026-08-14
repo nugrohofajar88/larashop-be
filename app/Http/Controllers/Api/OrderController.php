@@ -100,6 +100,17 @@ class OrderController extends Controller
             ]);
         }
 
+        // Berat varian wajib ada - dipakai buat hitung ongkir & booking ekspedisi.
+        // Cek live ke varian (bukan snapshot lama di cart) supaya produk yang baru
+        // ditambah ke keranjang sebelum beratnya diisi admin tidak lolos checkout.
+        $missingWeightItems = $selectedItems->filter(fn ($item) => (int) ($item->variant?->weight_grams ?? 0) <= 0);
+
+        if ($missingWeightItems->isNotEmpty()) {
+            throw ValidationException::withMessages([
+                'cart' => 'Berat produk berikut belum diatur, hubungi admin: '.$missingWeightItems->pluck('product_name')->unique()->implode(', ').'.',
+            ]);
+        }
+
         $shipmentOrigin = ShipmentOrigin::query()
             ->where('is_active', true)
             ->orderByDesc('is_default')
