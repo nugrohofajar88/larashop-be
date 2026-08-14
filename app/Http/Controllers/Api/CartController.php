@@ -20,10 +20,22 @@ class CartController extends Controller
     {
         $draftOrder = $this->draftOrder($request->user()->id);
 
+        // Harga selalu ditampilkan live (bukan harga saat item dimasukkan ke
+        // keranjang) - kalau berubah, kasih tahu FE lewat price_changed supaya
+        // bisa ditandai (mis. teks merah "Harga berubah"), sama seperti marketplace.
+        $changedIds = $draftOrder->items
+            ->filter(fn (OrderItem $item) => $item->syncPriceFromVariant())
+            ->pluck('id')
+            ->all();
+
+        if ($changedIds !== []) {
+            $this->refreshDraftTotals($draftOrder->fresh('items'));
+        }
+
         return response()->json([
             'data' => [
                 'items' => $draftOrder->items
-                    ->map(fn (OrderItem $item) => $this->mapItem($item))
+                    ->map(fn (OrderItem $item) => $this->mapItem($item, in_array($item->id, $changedIds, true)))
                     ->values()
                     ->all(),
                 'summary' => $this->summary($draftOrder->items),
@@ -201,7 +213,7 @@ class CartController extends Controller
         return max(1, (int) ($item->product?->stock ?? $item->quantity));
     }
 
-    private function mapItem(OrderItem $item): array
+    private function mapItem(OrderItem $item, bool $priceChanged = false): array
     {
         $image = $item->product?->images->firstWhere('is_primary', true)?->path
             ?? $item->product?->images->first()?->path
@@ -217,6 +229,7 @@ class CartController extends Controller
             'image' => $image,
             'price' => 'Rp'.number_format($item->price, 0, ',', '.'),
             'price_value' => (int) $item->price,
+            'price_changed' => $priceChanged,
             'qty' => (int) $item->quantity,
             'stock' => $stock,
             'selected' => (bool) $item->is_selected,

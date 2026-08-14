@@ -111,6 +111,13 @@ class OrderController extends Controller
             ]);
         }
 
+        // Harga selalu ikut harga live varian saat checkout (bukan harga saat
+        // produk dimasukkan ke keranjang) - supaya perubahan harga admin langsung
+        // kepakai, sebelum items_total/tarif ongkir/total dihitung di bawah.
+        foreach ($selectedItems as $item) {
+            $item->syncPriceFromVariant();
+        }
+
         $shipmentOrigin = ShipmentOrigin::query()
             ->where('is_active', true)
             ->orderByDesc('is_default')

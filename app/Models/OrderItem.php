@@ -52,4 +52,26 @@ class OrderItem extends Model
     {
         return $this->belongsTo(ProductVariant::class, 'product_variant_id');
     }
+
+    /**
+     * Sinkron price/subtotal ke harga live varian (bukan "dijanjikan" dari
+     * kapan item dimasukkan ke keranjang - kalau admin ubah harga, checkout
+     * harus pakai harga terbaru, sama seperti marketplace pada umumnya).
+     * Return true kalau harganya berubah.
+     */
+    public function syncPriceFromVariant(): bool
+    {
+        $livePrice = (int) ($this->variant?->price ?? $this->price);
+
+        if ($livePrice === (int) $this->price) {
+            return false;
+        }
+
+        $this->update([
+            'price' => $livePrice,
+            'subtotal' => $livePrice * $this->quantity,
+        ]);
+
+        return true;
+    }
 }
