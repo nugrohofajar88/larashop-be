@@ -47,6 +47,8 @@ class Order extends Model
         'shipment_note',
         'paid_at',
         'shipped_at',
+        'printed_at',
+        'printed_by',
         'cancel_requested_at',
         'cancel_reason',
         'recipient_name',
@@ -69,6 +71,7 @@ class Order extends Model
             'qris_expired_at' => 'datetime',
             'paid_at' => 'datetime',
             'shipped_at' => 'datetime',
+            'printed_at' => 'datetime',
             'cancel_requested_at' => 'datetime',
         ];
     }

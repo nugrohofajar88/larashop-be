@@ -47,6 +47,10 @@ class AdminOrderController extends Controller
     {
         return ApiData::order($order) + [
             'cod_service_fee' => (int) $order->cod_service_fee,
+            'is_printed' => $order->printed_at !== null,
+            'printed_label' => $order->printed_at
+                ? 'Dicetak '.$order->printed_at->translatedFormat('d M Y, H:i').' oleh '.($order->printed_by ?: '-')
+                : 'Belum dicetak',
         ];
     }
 
@@ -407,6 +411,8 @@ class AdminOrderController extends Controller
             }
 
             if ($pages >= $expected) {
+                $this->markPrinted($orders, $request);
+
                 return response((string) $combined['pdf'], 200, [
                     'Content-Type' => 'application/pdf',
                     'Content-Disposition' => 'inline; filename="labels-'.$expected.'.pdf"',
@@ -426,6 +432,7 @@ class AdminOrderController extends Controller
         $merger = new \setasign\Fpdi\Fpdi();
         $added = 0;
         $failed = [];
+        $printedOrders = collect();
 
         foreach ($orders as $order) {
             $no = (string) $order->komerce_order_no;
@@ -453,6 +460,7 @@ class AdminOrderController extends Controller
                     $merger->useTemplate($tpl);
                 }
                 $added++;
+                $printedOrders->push($order);
             } catch (\Throwable $e) {
                 $failed[$order->code] = 'gabung PDF gagal: '.$e->getMessage();
             }
@@ -468,9 +476,24 @@ class AdminOrderController extends Controller
             ]);
         }
 
+        $this->markPrinted($printedOrders, $request);
+
         return response((string) $merger->Output('S'), 200, [
             'Content-Type' => 'application/pdf',
             'Content-Disposition' => 'inline; filename="labels-'.$added.'.pdf"',
+        ]);
+    }
+
+    /** Tandai order (satu/banyak) sebagai sudah dicetak labelnya. */
+    private function markPrinted(\Illuminate\Support\Collection $orders, Request $request): void
+    {
+        if ($orders->isEmpty()) {
+            return;
+        }
+
+        Order::query()->whereIn('id', $orders->pluck('id'))->update([
+            'printed_at' => now(),
+            'printed_by' => (string) ($request->user()->name ?? 'Admin'),
         ]);
     }
 
@@ -526,7 +549,7 @@ class AdminOrderController extends Controller
         }
     }
 
-    public function printLabel(Order $order): \Illuminate\Http\Response
+    public function printLabel(Request $request, Order $order): \Illuminate\Http\Response
     {
         if (trim((string) $order->komerce_order_no) === '') {
             throw ValidationException::withMessages([
@@ -542,6 +565,8 @@ class AdminOrderController extends Controller
             ]);
         }
 
+        $this->markPrinted(collect([$order]), $request);
+
         return response($result['pdf'], 200, [
             'Content-Type' => 'application/pdf',
             'Content-Disposition' => 'inline; filename="'.($result['filename'] ?? 'label.pdf').'"',
@@ -552,7 +577,7 @@ class AdminOrderController extends Controller
      * Label DIY (dibuat sendiri pakai dompdf + barcode), TERPISAH dari label resmi
      * Komerce. Untuk evaluasi layout; kalau tak dipakai tinggal hapus method + route.
      */
-    public function printLabelDiy(Order $order): \Illuminate\Http\Response
+    public function printLabelDiy(Request $request, Order $order): \Illuminate\Http\Response
     {
         $order->loadMissing('items');
 
@@ -611,6 +636,8 @@ class AdminOrderController extends Controller
 
         $pdf = \Barryvdh\DomPDF\Facade\Pdf::loadView('labels.diy', $data)
             ->setPaper([0, 0, 283.465, 425.197]); // 100x150mm dalam point
+
+        $this->markPrinted(collect([$order]), $request);
 
         return response($pdf->output(), 200, [
             'Content-Type' => 'application/pdf',
