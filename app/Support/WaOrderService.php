@@ -738,6 +738,16 @@ class WaOrderService
             ? 'Order via WhatsApp (form), bayar COD. Siap dibooking ke ekspedisi.'
             : 'Order via WhatsApp (form). Menunggu validasi pembayaran.';
 
+        // Berat varian wajib ada - dipakai buat hitung ongkir & booking ekspedisi.
+        // Sama seperti guard di checkout web (OrderController::store()).
+        $missingWeightItems = collect($items)->filter(fn (array $i): bool => (int) ($i['weight'] ?? 0) <= 0);
+
+        if ($missingWeightItems->isNotEmpty()) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'items' => 'Berat produk berikut belum diatur, hubungi admin: '.$missingWeightItems->pluck('name')->unique()->implode(', ').'.',
+            ]);
+        }
+
         $itemsTotal = (int) collect($items)->sum(fn (array $i): int => $i['price'] * $i['qty']);
         $shippingTotal = (int) ($shipping['price_value'] ?? 0);
         $grandTotal = max(0, $itemsTotal + $shippingTotal + $uniqueCode);

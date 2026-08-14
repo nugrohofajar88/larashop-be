@@ -220,7 +220,10 @@ class OrderController extends Controller
                     'product_name' => $item->product_name,
                     'product_sku' => $item->product_sku,
                     'variant_label' => $item->variant_label,
-                    'weight_grams' => $item->weight_grams,
+                    // Pakai berat live varian (sudah divalidasi non-kosong di atas), bukan
+                    // snapshot lama di keranjang - snapshot bisa basi kalau item sempat
+                    // masuk keranjang sebelum admin isi berat variannya.
+                    'weight_grams' => $item->variant->weight_grams,
                     'price' => $item->price,
                     'quantity' => $item->quantity,
                     'subtotal' => $item->subtotal,
