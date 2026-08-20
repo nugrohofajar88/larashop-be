@@ -31,13 +31,21 @@ class AdminRajaOngkirBalanceController extends Controller
         // (lihat $totalCodRemitted di bawah), jadi kalau ikut dihitung di sini akan
         // dobel. Debit yg beneran kepotong = shipping_total DIKURANGI cashback (bukan
         // shipping_total mentah) - tervalidasi cocok persis ke data mutasi asli
-        // RajaOngkir (20 Agustus 2026).
+        // RajaOngkir (20 Agustus 2026). Kalau order sudah di-flag (shipping_actual_value
+        // terisi, dari verifikasi manual ke mutasi asli - lihat shipping_discrepancy_note),
+        // pakai angka REAL itu, bukan hasil hitungan shipping_total-cashback yang bisa
+        // salah kalau order sempat kena bug snapshot berat produk.
         $nonCodShipped = Order::query()
             ->whereNotNull('awb')->where('awb', '!=', '')
             ->where('payment_method', '!=', 'COD')
-            ->get(['shipping_total', 'shipping_cashback']);
-        $totalOngkir = (int) $nonCodShipped->sum(fn (Order $o): int => $o->shipping_total - $o->shipping_cashback
+            ->get(['shipping_total', 'shipping_cashback', 'shipping_actual_value']);
+        $totalOngkir = (int) $nonCodShipped->sum(fn (Order $o): int => $o->shipping_actual_value ?? ($o->shipping_total - $o->shipping_cashback)
         );
+
+        $flaggedDiscrepancies = Order::query()
+            ->whereNotNull('shipping_discrepancy_note')
+            ->orderByDesc('shipping_reconciled_at')
+            ->get(['code', 'shipping_total', 'shipping_cashback', 'shipping_actual_value', 'shipping_discrepancy_note', 'shipping_reconciled_at']);
 
         $qrisCount = QrisGenerationLog::query()->count();
         $totalQrisFee = (int) QrisGenerationLog::query()->sum('fee');
@@ -65,6 +73,14 @@ class AdminRajaOngkirBalanceController extends Controller
                     'note' => $t->note,
                     'created_by' => $t->created_by,
                 ])->values()->all(),
+                'flagged_discrepancies' => $flaggedDiscrepancies->map(fn (Order $o): array => [
+                    'code' => $o->code,
+                    'shipping_total' => ApiData::rupiah((int) $o->shipping_total),
+                    'shipping_cashback' => ApiData::rupiah((int) $o->shipping_cashback),
+                    'shipping_actual_value' => ApiData::rupiah((int) $o->shipping_actual_value),
+                    'note' => $o->shipping_discrepancy_note,
+                    'reconciled_at' => $o->shipping_reconciled_at?->translatedFormat('d M Y'),
+                ])->values()->all(),
             ],
             'meta' => [
                 'total_topup' => ApiData::rupiah($totalTopup),
@@ -78,6 +94,7 @@ class AdminRajaOngkirBalanceController extends Controller
                 'total_cod_remitted_value' => $totalCodRemitted,
                 'estimated_balance' => ApiData::rupiah($estimatedBalance),
                 'estimated_balance_value' => $estimatedBalance,
+                'flagged_discrepancies_count' => $flaggedDiscrepancies->count(),
             ],
         ]);
     }
