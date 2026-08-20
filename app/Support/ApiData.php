@@ -467,6 +467,8 @@ class ApiData
             'shipping' => [
                 'service' => $order->shipping_service_name,
                 'estimate' => $order->shipping_estimate_days,
+                'recipient_name' => $order->recipient_name,
+                'recipient_phone' => $order->recipient_phone,
                 'address' => $order->address_snapshot,
                 'awb' => $order->awb,
                 'komerce_order_no' => $order->komerce_order_no,
