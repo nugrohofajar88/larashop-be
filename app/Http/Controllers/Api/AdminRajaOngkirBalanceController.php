@@ -61,6 +61,19 @@ class AdminRajaOngkirBalanceController extends Controller
         $totalCodRemitted = (int) $remittedCod->sum(fn (Order $o): int => $o->grand_total - $o->shipping_total - $o->cod_service_fee + $o->shipping_cashback
         );
 
+        // Dana COD yang masih di jalan (order "shipped", belum "completed") - uangnya
+        // masih dipegang kurir, BELUM diremit ke saldo deposit. Sengaja TIDAK ikut
+        // ditambahkan ke $estimatedBalance (itu baru saldo yang beneran ada), tapi
+        // ditampilkan terpisah sebagai info "nanti bakal masuk sekian". Formula sama
+        // persis dgn Potential Income di AdminAccountingController (tervalidasi cocok
+        // ke dashboard RajaOngkir/Komerce).
+        $inTransitCod = Order::query()
+            ->where('payment_method', 'COD')
+            ->where('status', 'shipped')
+            ->get(['grand_total', 'shipping_total', 'cod_service_fee', 'shipping_cashback']);
+        $codInTransit = (int) $inTransitCod->sum(fn (Order $o): int => $o->grand_total - $o->shipping_total - $o->cod_service_fee + $o->shipping_cashback
+        );
+
         $estimatedBalance = $totalTopup - $totalOngkir - $totalQrisFee + $totalCodRemitted;
 
         return response()->json([
@@ -92,6 +105,9 @@ class AdminRajaOngkirBalanceController extends Controller
                 'qris_count' => $qrisCount,
                 'total_cod_remitted' => ApiData::rupiah($totalCodRemitted),
                 'total_cod_remitted_value' => $totalCodRemitted,
+                'cod_in_transit' => ApiData::rupiah($codInTransit),
+                'cod_in_transit_value' => $codInTransit,
+                'cod_in_transit_count' => $inTransitCod->count(),
                 'estimated_balance' => ApiData::rupiah($estimatedBalance),
                 'estimated_balance_value' => $estimatedBalance,
                 'flagged_discrepancies_count' => $flaggedDiscrepancies->count(),
@@ -122,5 +138,83 @@ class AdminRajaOngkirBalanceController extends Controller
         $topup->delete();
 
         return response()->json(['message' => 'Catatan top up dihapus.']);
+    }
+
+    /**
+     * Sinkronisasi total biaya generate QRIS dari file mutasi RajaOngkir/Komerce
+     * (CSV, kolom: Tanggal, Jenis Transaksi, Resi, Mutasi, Debit/Credit, Saldo,
+     * Detail - hasil export dashboard mereka). Cuma proses baris "generate_qris".
+     * Dedup berdasarkan timestamp persis (created_at) supaya upload ulang file yang
+     * rentang tanggalnya overlap tidak dobel-catat.
+     */
+    public function syncQris(Request $request): JsonResponse
+    {
+        $request->validate([
+            'file' => ['required', 'file', 'mimes:csv,txt', 'max:5120'],
+        ]);
+
+        $handle = fopen($request->file('file')->getRealPath(), 'r');
+        if ($handle === false) {
+            return response()->json(['message' => 'File tidak bisa dibaca.'], 422);
+        }
+
+        $header = fgetcsv($handle);
+        if ($header === false) {
+            fclose($handle);
+
+            return response()->json(['message' => 'File kosong atau format tidak dikenali.'], 422);
+        }
+
+        $tanggalIdx = array_search('Tanggal', $header, true);
+        $jenisIdx = array_search('Jenis Transaksi', $header, true);
+        $mutasiIdx = array_search('Mutasi', $header, true);
+
+        if ($tanggalIdx === false || $jenisIdx === false || $mutasiIdx === false) {
+            fclose($handle);
+
+            return response()->json(['message' => 'Kolom "Tanggal", "Jenis Transaksi", atau "Mutasi" tidak ditemukan di file.'], 422);
+        }
+
+        $existingTimestamps = QrisGenerationLog::query()->pluck('created_at')
+            ->map(fn ($t) => $t->format('Y-m-d H:i:s'))
+            ->flip();
+
+        $added = 0;
+        $skipped = 0;
+        $addedFee = 0;
+
+        while (($row = fgetcsv($handle)) !== false) {
+            if (($row[$jenisIdx] ?? null) !== 'generate_qris') {
+                continue;
+            }
+
+            $timestamp = \Carbon\Carbon::parse($row[$tanggalIdx], 'Asia/Jakarta');
+            $key = $timestamp->format('Y-m-d H:i:s');
+
+            if (isset($existingTimestamps[$key])) {
+                $skipped++;
+
+                continue;
+            }
+
+            $fee = (int) $row[$mutasiIdx];
+
+            $log = new QrisGenerationLog();
+            $log->fee = $fee;
+            $log->created_at = $timestamp;
+            $log->updated_at = $timestamp;
+            $log->save();
+
+            $existingTimestamps[$key] = true;
+            $added++;
+            $addedFee += $fee;
+        }
+
+        fclose($handle);
+
+        return response()->json([
+            'message' => "Sinkronisasi selesai: {$added} baris baru ditambahkan (Rp".number_format($addedFee, 0, ',', '.').'), '."{$skipped} baris dilewati karena sudah tercatat.",
+            'meta' => ['added' => $added, 'skipped' => $skipped, 'added_fee_value' => $addedFee],
+        ]);
     }
 }

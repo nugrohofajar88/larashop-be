@@ -89,6 +89,7 @@ Route::prefix('v1')->middleware('throttle:api')->group(function (): void {
         Route::get('/rajaongkir-balance', [AdminRajaOngkirBalanceController::class, 'index']);
         Route::post('/rajaongkir-balance/topups', [AdminRajaOngkirBalanceController::class, 'storeTopup']);
         Route::delete('/rajaongkir-balance/topups/{topup}', [AdminRajaOngkirBalanceController::class, 'destroyTopup']);
+        Route::post('/rajaongkir-balance/sync-qris', [AdminRajaOngkirBalanceController::class, 'syncQris']);
         Route::get('/accounts', [AdminAccountController::class, 'index']);
         Route::post('/accounts', [AdminAccountController::class, 'store']);
         Route::get('/accounts/{account}', [AdminAccountController::class, 'show']);
