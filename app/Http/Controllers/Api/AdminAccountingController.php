@@ -60,11 +60,17 @@ class AdminAccountingController extends Controller
             $codServiceFee = (int) $order->cod_service_fee;
             $shippingCashback = (int) $order->shipping_cashback;
             $uniqueCode = (int) $order->unique_code;
-            // items_total, shipping_total, & unique_code dikeluarkan - ketiganya bukan
-            // keuntungan penjual (nilai produk, ongkir buat bayar kurir, dan kode unik
-            // yang ujungnya jadi saldo/milik pembeli). "net" jadi murni cerminan dampak
-            // fee COD & cashback saja.
-            $net = $mode === 'buyer'
+            // "Net" = pendapatan riil dari transaksi ini (uang yang beneran diterima) -
+            // items_total & unique_code TETAP masuk (itu duit yang beneran diterima),
+            // cuma shipping_total & cod_service_fee yg keluar (lewat ke kurir/potongan
+            // COD). Formula ini sengaja SAMA dgn "Potential Income" & tidak bergantung
+            // mode buyer/seller, supaya bisa dicocokkan langsung ke dashboard RajaOngkir.
+            $net = $gross - $shippingTotal - $codServiceFee + $shippingCashback;
+
+            // "Untung/Rugi" = keuntungan penjual senyatanya - items_total, shipping_total,
+            // & unique_code dikeluarkan (ketiganya bukan keuntungan penjual: nilai produk,
+            // ongkir buat bayar kurir, dan kode unik yang ujungnya jadi saldo/milik pembeli).
+            $profitLoss = $mode === 'buyer'
                 ? $gross - $itemsTotal - $shippingTotal - $codServiceFee - $uniqueCode
                 : $gross - $itemsTotal - $shippingTotal - $codServiceFee + $shippingCashback - $uniqueCode;
 
@@ -87,15 +93,17 @@ class AdminAccountingController extends Controller
                 'unique_code_pembeli_value' => $uniqueCode,
                 'net' => ApiData::rupiah($net),
                 'net_value' => $net,
-                'status' => $net > 0 ? 'CUAN' : ($net < 0 ? 'BONCOS' : 'IMPAS'),
+                'profit_loss' => ApiData::rupiah($profitLoss),
+                'profit_loss_value' => $profitLoss,
+                'status' => $profitLoss > 0 ? 'CUAN' : ($profitLoss < 0 ? 'BONCOS' : 'IMPAS'),
             ];
         })->values()->all();
 
-        $totalNet = collect($rows)->sum('net_value');
+        $totalNet = collect($rows)->sum('profit_loss_value');
         $cuanCount = collect($rows)->where('status', 'CUAN')->count();
         $impasCount = collect($rows)->where('status', 'IMPAS')->count();
-        $cuanTotal = (int) collect($rows)->where('status', 'CUAN')->sum('net_value');
-        $boncosTotal = (int) collect($rows)->where('status', 'BONCOS')->sum('net_value');
+        $cuanTotal = (int) collect($rows)->where('status', 'CUAN')->sum('profit_loss_value');
+        $boncosTotal = (int) collect($rows)->where('status', 'BONCOS')->sum('profit_loss_value');
 
         // Snapshot real-time (BUKAN scoped ke bulan/filter di atas) - order COD yang
         // masih "shipped" (dikirim, belum ditandai selesai). Uangnya masih dipegang
