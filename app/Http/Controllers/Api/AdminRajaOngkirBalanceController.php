@@ -61,20 +61,21 @@ class AdminRajaOngkirBalanceController extends Controller
         $totalCodRemitted = (int) $remittedCod->sum(fn (Order $o): int => $o->grand_total - $o->shipping_total - $o->cod_service_fee + $o->shipping_cashback
         );
 
-        // Dana COD yang masih di jalan (order "shipped", belum "completed") - uangnya
-        // masih dipegang kurir, BELUM diremit ke saldo deposit. Sengaja TIDAK ikut
-        // ditambahkan ke $estimatedBalance (itu baru saldo yang beneran ada), tapi
-        // ditampilkan terpisah sebagai info "nanti bakal masuk sekian". Formula sama
-        // persis dgn Potential Income di AdminAccountingController (tervalidasi cocok
-        // ke dashboard RajaOngkir/Komerce).
+        // Dana COD yang masih di jalan - order sudah "paid" (perlu dikirim), "processing"
+        // (menunggu penjemputan), atau "shipped" (dalam pengiriman), belum "completed".
+        // Ikut dikurangi dari $estimatedBalance (Estimasi Saldo ditampilkan net setelah
+        // dikurangi potensi dana yang masih di jalan ini). Formula sama persis dgn
+        // Potential Income di AdminAccountingController (tervalidasi cocok ke dashboard
+        // RajaOngkir/Komerce), bedanya di sini scope status-nya lebih luas (paid s.d.
+        // shipped, bukan cuma shipped) karena mencakup seluruh order COD yang belum diremit.
         $inTransitCod = Order::query()
             ->where('payment_method', 'COD')
-            ->where('status', 'shipped')
+            ->whereIn('status', ['paid', 'processing', 'shipped'])
             ->get(['grand_total', 'shipping_total', 'cod_service_fee', 'shipping_cashback']);
         $codInTransit = (int) $inTransitCod->sum(fn (Order $o): int => $o->grand_total - $o->shipping_total - $o->cod_service_fee + $o->shipping_cashback
         );
 
-        $estimatedBalance = $totalTopup - $totalOngkir - $totalQrisFee + $totalCodRemitted;
+        $estimatedBalance = $totalTopup - $totalOngkir - $totalQrisFee + $totalCodRemitted - $codInTransit;
 
         return response()->json([
             'data' => [
