@@ -18,8 +18,21 @@ class OrderPaymentService
      */
     public function markPaid(Order $order, string $source = 'admin'): array
     {
-        DB::transaction(function () use ($order, $source): void {
-            $order->update([
+        // Guard anti-dobel (row lock) - mencegah 2 permintaan yang nyaris bersamaan
+        // (klik dobel tombol "Validasi pembayaran", webhook+poll QRIS, dll) sama-sama
+        // lolos dan booking ke Komerce 2x untuk order yang sama. Insiden nyata: 11
+        // order kena biaya retry-booking ganda (~Rp267rb) krn markPaid() dipanggil
+        // dobel tanpa penjagaan ini - lihat shipping_retry_fee di tabel orders.
+        // lockForUpdate() bikin request kedua NUNGGU sampai request pertama commit,
+        // baru re-cek status - jadi begitu lolos lock, statusnya udah pasti "paid".
+        $isDuplicate = DB::transaction(function () use ($order, $source): bool {
+            $locked = Order::query()->whereKey($order->id)->lockForUpdate()->firstOrFail();
+
+            if ($locked->status !== 'pending_payment') {
+                return true;
+            }
+
+            $locked->update([
                 'status' => 'paid',
                 'payment_status' => $source === 'cod' ? 'COD - bayar saat barang diterima' : 'Tervalidasi',
                 'paid_at' => now(),
@@ -28,15 +41,15 @@ class OrderPaymentService
                     : 'Pembayaran tervalidasi. Order siap diproses ke shipment.',
             ]);
 
-            if (Setting::uniqueCodeEnabled() && (int) $order->unique_code > 0) {
+            if (Setting::uniqueCodeEnabled() && (int) $locked->unique_code > 0) {
                 UserUniqueCode::query()->firstOrCreate(
                     [
-                        'user_id' => $order->user_id,
-                        'ref_id' => $order->id,
+                        'user_id' => $locked->user_id,
+                        'ref_id' => $locked->id,
                         'type' => 'paid',
                     ],
                     [
-                        'value' => (int) $order->unique_code,
+                        'value' => (int) $locked->unique_code,
                     ]
                 );
             }
@@ -49,15 +62,15 @@ class OrderPaymentService
                 // seperti kode unik: masuk ke unique_code + grand_total, DAN dicatat
                 // sebagai SALDO customer (type 'paid') — terlepas dari setting kode
                 // unik manual. Jadi data order konsisten & receh tak hilang.
-                $diff = (int) $order->qris_amount - (int) $order->grand_total;
-                if ((int) $order->qris_amount > 0 && $diff > 0) {
+                $diff = (int) $locked->qris_amount - (int) $locked->grand_total;
+                if ((int) $locked->qris_amount > 0 && $diff > 0) {
                     $orderUpdate['unique_code'] = $diff;
-                    $orderUpdate['grand_total'] = (int) $order->qris_amount;
+                    $orderUpdate['grand_total'] = (int) $locked->qris_amount;
 
                     UserUniqueCode::query()->firstOrCreate(
                         [
-                            'user_id' => $order->user_id,
-                            'ref_id' => $order->id,
+                            'user_id' => $locked->user_id,
+                            'ref_id' => $locked->id,
                             'type' => 'paid',
                         ],
                         [
@@ -66,9 +79,21 @@ class OrderPaymentService
                     );
                 }
 
-                $order->update($orderUpdate);
+                $locked->update($orderUpdate);
             }
+
+            return false;
         });
+
+        $order->refresh();
+
+        if ($isDuplicate) {
+            return [
+                'message' => 'Order ini sudah divalidasi sebelumnya (permintaan dobel diabaikan, booking ekspedisi tidak diulang).',
+                'booking_failed' => false,
+                'order_no' => $order->komerce_order_no,
+            ];
+        }
 
         // Auto-booking ekspedisi via Komerce (store order) — kalau diaktifkan.
         // Dilakukan SETELAH validasi commit, jadi validasi tetap sukses walau booking gagal.
