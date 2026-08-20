@@ -53,12 +53,15 @@ class AdminRajaOngkirBalanceController extends Controller
         // COD yang sudah "completed" dianggap sudah diremit ke saldo deposit -
         // formula sama persis dgn Potential Income (sudah tervalidasi cocok ke
         // dashboard RajaOngkir), bedanya di sini utk order yang SUDAH selesai,
-        // bukan yang masih dalam perjalanan.
+        // bukan yang masih dalam perjalanan. Kalau order sudah di-flag (shipping_
+        // actual_value terisi, dari verifikasi manual ke mutasi asli), pakai angka
+        // REAL itu (net cashback) - bukan shipping_total-shipping_cashback yang bisa
+        // salah kalau order kena bug snapshot berat produk.
         $remittedCod = Order::query()
             ->where('payment_method', 'COD')
             ->where('status', 'completed')
-            ->get(['grand_total', 'shipping_total', 'cod_service_fee', 'shipping_cashback']);
-        $totalCodRemitted = (int) $remittedCod->sum(fn (Order $o): int => $o->grand_total - $o->shipping_total - $o->cod_service_fee + $o->shipping_cashback
+            ->get(['grand_total', 'shipping_total', 'cod_service_fee', 'shipping_cashback', 'shipping_actual_value']);
+        $totalCodRemitted = (int) $remittedCod->sum(fn (Order $o): int => $o->grand_total - ($o->shipping_actual_value ?? ($o->shipping_total - $o->shipping_cashback)) - $o->cod_service_fee
         );
 
         // Dana COD yang benar-benar "dalam perjalanan" - HANYA order "shipped" (paket
