@@ -94,6 +94,8 @@ class AdminAccountingController extends Controller
         $totalNet = collect($rows)->sum('net_value');
         $cuanCount = collect($rows)->where('status', 'CUAN')->count();
         $impasCount = collect($rows)->where('status', 'IMPAS')->count();
+        $cuanTotal = (int) collect($rows)->where('status', 'CUAN')->sum('net_value');
+        $boncosTotal = (int) collect($rows)->where('status', 'BONCOS')->sum('net_value');
 
         // Snapshot real-time (BUKAN scoped ke bulan/filter di atas) - order COD yang
         // masih "shipped" (dikirim, belum ditandai selesai). Uangnya masih dipegang
@@ -119,6 +121,10 @@ class AdminAccountingController extends Controller
                 'cuan_count' => $cuanCount,
                 'impas_count' => $impasCount,
                 'boncos_count' => $orders->count() - $cuanCount - $impasCount,
+                'cuan_total_value' => $cuanTotal,
+                'cuan_total' => ApiData::rupiah($cuanTotal),
+                'boncos_total_value' => $boncosTotal,
+                'boncos_total' => ApiData::rupiah($boncosTotal),
                 'total_net' => ApiData::rupiah((int) $totalNet),
                 'total_net_value' => (int) $totalNet,
                 'total_gross' => ApiData::rupiah((int) $orders->sum('grand_total')),
