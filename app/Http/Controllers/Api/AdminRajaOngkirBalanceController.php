@@ -87,7 +87,7 @@ class AdminRajaOngkirBalanceController extends Controller
         $retryFeeOrders = Order::query()
             ->whereNotNull('shipping_retry_fee')
             ->orderByDesc('created_at')
-            ->get(['code', 'awb', 'recipient_name', 'shipping_retry_fee', 'created_at']);
+            ->get(['code', 'awb', 'komerce_order_no', 'recipient_name', 'shipping_retry_fee', 'shipping_retry_count', 'created_at']);
         $totalRetryFee = (int) $retryFeeOrders->sum('shipping_retry_fee');
 
         $estimatedBalance = $totalTopup - $totalOngkir - $totalQrisFee + $totalCodRemitted - $totalRetryFee;
@@ -110,14 +110,23 @@ class AdminRajaOngkirBalanceController extends Controller
                     'note' => $o->shipping_discrepancy_note,
                     'reconciled_at' => $o->shipping_reconciled_at?->translatedFormat('d M Y'),
                 ])->values()->all(),
-                'retry_fees' => $retryFeeOrders->map(fn (Order $o): array => [
-                    'code' => $o->code,
-                    'awb' => $o->awb,
-                    'recipient_name' => $o->recipient_name,
-                    'fee' => ApiData::rupiah((int) $o->shipping_retry_fee),
-                    'fee_value' => (int) $o->shipping_retry_fee,
-                    'date' => $o->created_at?->translatedFormat('d M Y'),
-                ])->values()->all(),
+                'retry_fees' => $retryFeeOrders->map(function (Order $o): array {
+                    $count = (int) ($o->shipping_retry_count ?? 1);
+                    $total = (int) $o->shipping_retry_fee;
+                    $perRetry = intdiv($total, $count);
+
+                    return [
+                        'code' => $o->code,
+                        'awb' => $o->awb,
+                        'komerce_order_no' => $o->komerce_order_no,
+                        'recipient_name' => $o->recipient_name,
+                        'fee_per_retry' => ApiData::rupiah($perRetry),
+                        'retry_count' => $count,
+                        'fee' => ApiData::rupiah($total),
+                        'fee_value' => $total,
+                        'date' => $o->created_at?->translatedFormat('d M Y'),
+                    ];
+                })->values()->all(),
             ],
             'meta' => [
                 'total_topup' => ApiData::rupiah($totalTopup),
