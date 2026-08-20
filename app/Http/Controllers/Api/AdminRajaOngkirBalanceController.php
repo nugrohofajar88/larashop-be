@@ -87,7 +87,7 @@ class AdminRajaOngkirBalanceController extends Controller
         $retryFeeOrders = Order::query()
             ->whereNotNull('shipping_retry_fee')
             ->orderByDesc('created_at')
-            ->get(['code', 'awb', 'shipping_retry_fee', 'created_at']);
+            ->get(['code', 'awb', 'recipient_name', 'shipping_retry_fee', 'created_at']);
         $totalRetryFee = (int) $retryFeeOrders->sum('shipping_retry_fee');
 
         $estimatedBalance = $totalTopup - $totalOngkir - $totalQrisFee + $totalCodRemitted - $totalRetryFee;
@@ -113,6 +113,7 @@ class AdminRajaOngkirBalanceController extends Controller
                 'retry_fees' => $retryFeeOrders->map(fn (Order $o): array => [
                     'code' => $o->code,
                     'awb' => $o->awb,
+                    'recipient_name' => $o->recipient_name,
                     'fee' => ApiData::rupiah((int) $o->shipping_retry_fee),
                     'fee_value' => (int) $o->shipping_retry_fee,
                     'date' => $o->created_at?->translatedFormat('d M Y'),
