@@ -77,7 +77,18 @@ class AdminRajaOngkirBalanceController extends Controller
         $codInTransit = (int) $inTransitCod->sum(fn (Order $o): int => $o->grand_total - $o->shipping_total - $o->cod_service_fee + $o->shipping_cashback
         );
 
-        $estimatedBalance = $totalTopup - $totalOngkir - $totalQrisFee + $totalCodRemitted - $codInTransit;
+        // Biaya ekstra dari percobaan booking yang gagal sebelum akhirnya berhasil
+        // dapat AWB - Komerce tetap motong biaya di setiap percobaan, bukan cuma yang
+        // berhasil. Ketemu dari rekonsiliasi manual ke file mutasi (baris tanpa Resi,
+        // ID booking mepet dgn order asli, nilai identik). Ikut dikurangi dari
+        // $estimatedBalance karena ini beneran kepotong dari saldo deposit.
+        $retryFeeOrders = Order::query()
+            ->whereNotNull('shipping_retry_fee')
+            ->orderByDesc('created_at')
+            ->get(['code', 'awb', 'shipping_retry_fee', 'created_at']);
+        $totalRetryFee = (int) $retryFeeOrders->sum('shipping_retry_fee');
+
+        $estimatedBalance = $totalTopup - $totalOngkir - $totalQrisFee + $totalCodRemitted - $codInTransit - $totalRetryFee;
 
         return response()->json([
             'data' => [
@@ -97,6 +108,13 @@ class AdminRajaOngkirBalanceController extends Controller
                     'note' => $o->shipping_discrepancy_note,
                     'reconciled_at' => $o->shipping_reconciled_at?->translatedFormat('d M Y'),
                 ])->values()->all(),
+                'retry_fees' => $retryFeeOrders->map(fn (Order $o): array => [
+                    'code' => $o->code,
+                    'awb' => $o->awb,
+                    'fee' => ApiData::rupiah((int) $o->shipping_retry_fee),
+                    'fee_value' => (int) $o->shipping_retry_fee,
+                    'date' => $o->created_at?->translatedFormat('d M Y'),
+                ])->values()->all(),
             ],
             'meta' => [
                 'total_topup' => ApiData::rupiah($totalTopup),
@@ -111,6 +129,9 @@ class AdminRajaOngkirBalanceController extends Controller
                 'cod_in_transit' => ApiData::rupiah($codInTransit),
                 'cod_in_transit_value' => $codInTransit,
                 'cod_in_transit_count' => $inTransitCod->count(),
+                'total_retry_fee' => ApiData::rupiah($totalRetryFee),
+                'total_retry_fee_value' => $totalRetryFee,
+                'retry_fee_count' => $retryFeeOrders->count(),
                 'estimated_balance' => ApiData::rupiah($estimatedBalance),
                 'estimated_balance_value' => $estimatedBalance,
                 'flagged_discrepancies_count' => $flaggedDiscrepancies->count(),
