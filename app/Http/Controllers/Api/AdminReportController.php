@@ -47,17 +47,30 @@ class AdminReportController extends Controller
             ->whereRaw("$revenueDate BETWEEN ? AND ?", [$start, $end])
             ->selectRaw('order_items.product_name, order_items.variant_label, SUM(order_items.quantity) as qty, SUM(order_items.subtotal) as omzet, COUNT(DISTINCT order_items.order_id) as order_count')
             ->groupBy('order_items.product_name', 'order_items.variant_label')
-            ->orderByDesc('omzet')
             ->get();
 
-        $data = $rows->map(fn ($r): array => [
-            'product_name' => $r->product_name,
-            'variant_label' => $r->variant_label,
-            'qty' => (int) $r->qty,
-            'omzet' => ApiData::rupiah((int) $r->omzet),
-            'omzet_value' => (int) $r->omzet,
-            'order_count' => (int) $r->order_count,
-        ])->values()->all();
+        // Urutkan produk (bukan baris varian) berdasarkan total omzet gabungan semua
+        // variannya, lalu varian di dalam tiap produk diurutkan omzet-nya sendiri -
+        // supaya varian dari produk yang sama selalu berdekatan (tidak "loncat" jauh
+        // gara-gara ke-interleave sama produk lain kalau sortnya cuma per baris varian).
+        $data = $rows->groupBy('product_name')
+            ->map(fn ($variants, $productName) => [
+                'product_name' => $productName,
+                'total_omzet_value' => (int) $variants->sum('omzet'),
+                'variants' => $variants->sortByDesc('omzet')->values(),
+            ])
+            ->sortByDesc('total_omzet_value')
+            ->values()
+            ->flatMap(fn (array $product) => $product['variants']->map(fn ($r): array => [
+                'product_name' => $r->product_name,
+                'variant_label' => $r->variant_label,
+                'qty' => (int) $r->qty,
+                'omzet' => ApiData::rupiah((int) $r->omzet),
+                'omzet_value' => (int) $r->omzet,
+                'order_count' => (int) $r->order_count,
+            ]))
+            ->values()
+            ->all();
 
         return response()->json([
             'data' => $data,
