@@ -106,6 +106,7 @@ Route::prefix('v1')->middleware('throttle:api')->group(function (): void {
         Route::get('/orders/{order}', [AdminOrderController::class, 'show']);
         Route::post('/orders/{order}/validate-payment', [AdminOrderController::class, 'validatePayment']);
         Route::post('/orders/{order}/retry-booking', [AdminOrderController::class, 'retryBooking']);
+        Route::put('/orders/{order}/recipient', [AdminOrderController::class, 'updateRecipient']);
         Route::post('/orders/{order}/cancel', [AdminOrderController::class, 'cancel']);
         Route::post('/orders/{order}/reject-cancellation', [AdminOrderController::class, 'rejectCancellation']);
         Route::post('/orders/{order}/process-shipment', [AdminOrderController::class, 'processShipment']);

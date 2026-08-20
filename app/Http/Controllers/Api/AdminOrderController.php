@@ -54,6 +54,47 @@ class AdminOrderController extends Controller
         ];
     }
 
+    /**
+     * Perbaiki nama/nomor HP penerima - dibatasi cuma untuk order yang belum
+     * di-booking ke ekspedisi (AWB masih kosong), supaya tidak mismatch dgn
+     * data yang sudah terlanjur dikirim ke Komerce/kurir. Kasus nyata: booking
+     * gagal karena "receiver phone number invalid" (customer salah ketik saat
+     * checkout, mis. cuma "88") dan admin butuh cara memperbaikinya tanpa
+     * minta customer batalkan & order ulang.
+     */
+    public function updateRecipient(Request $request, Order $order): JsonResponse
+    {
+        if (trim((string) $order->awb) !== '') {
+            throw ValidationException::withMessages([
+                'order' => 'Order ini sudah punya AWB - data penerima tidak boleh diubah lagi (sudah dikirim ke ekspedisi).',
+            ]);
+        }
+
+        $validated = $request->validate([
+            'recipient_name' => ['required', 'string', 'max:255'],
+            'recipient_phone' => ['required', 'string', 'max:20', 'regex:/^[0-9+\-\s]+$/'],
+        ]);
+
+        $phoneDigits = preg_replace('/\D/', '', $validated['recipient_phone']);
+        if (strlen($phoneDigits) < 9) {
+            throw ValidationException::withMessages([
+                'recipient_phone' => 'Nomor HP penerima terlalu pendek/tidak valid.',
+            ]);
+        }
+
+        $order->update([
+            'recipient_name' => $validated['recipient_name'],
+            'recipient_phone' => $validated['recipient_phone'],
+        ]);
+
+        $order->refresh()->load(['items', 'user']);
+
+        return response()->json([
+            'data' => $this->orderWithAdminExtras($order),
+            'message' => 'Data penerima berhasil diperbarui.',
+        ]);
+    }
+
     public function validatePayment(Order $order): JsonResponse
     {
         $result = app(\App\Support\OrderPaymentService::class)->markPaid($order, 'admin');
