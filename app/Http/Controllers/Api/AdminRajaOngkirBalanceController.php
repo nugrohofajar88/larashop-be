@@ -67,9 +67,11 @@ class AdminRajaOngkirBalanceController extends Controller
         // Dana COD yang benar-benar "dalam perjalanan" - HANYA order "shipped" (paket
         // sudah diserahterimakan ke kurir, ada AWB). Order "paid"/"processing" belum
         // dikirim sama sekali (bahkan kalaupun sudah ada AWB dibuat lebih awal), jadi
-        // belum relevan disebut "dalam perjalanan". Ikut dikurangi dari $estimatedBalance.
-        // Formula sama persis dgn Potential Income di AdminAccountingController
-        // (tervalidasi cocok ke dashboard RajaOngkir/Komerce).
+        // belum relevan disebut "dalam perjalanan". SENGAJA TIDAK dikurangi dari
+        // $estimatedBalance - persis seperti dashboard RajaOngkir/Komerce sendiri yang
+        // memisahkan "Balance" dari "Potential Income" (keduanya independen, gak saling
+        // pengaruh). Ditampilkan terpisah sbg info aja. Formula sama persis dgn
+        // Potential Income di AdminAccountingController (tervalidasi cocok ke dashboard).
         $inTransitCod = Order::query()
             ->where('payment_method', 'COD')
             ->where('status', 'shipped')
@@ -88,7 +90,7 @@ class AdminRajaOngkirBalanceController extends Controller
             ->get(['code', 'awb', 'shipping_retry_fee', 'created_at']);
         $totalRetryFee = (int) $retryFeeOrders->sum('shipping_retry_fee');
 
-        $estimatedBalance = $totalTopup - $totalOngkir - $totalQrisFee + $totalCodRemitted - $codInTransit - $totalRetryFee;
+        $estimatedBalance = $totalTopup - $totalOngkir - $totalQrisFee + $totalCodRemitted - $totalRetryFee;
 
         return response()->json([
             'data' => [
