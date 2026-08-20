@@ -121,6 +121,8 @@ class AdminAccountingController extends Controller
                 'boncos_count' => $orders->count() - $cuanCount - $impasCount,
                 'total_net' => ApiData::rupiah((int) $totalNet),
                 'total_net_value' => (int) $totalNet,
+                'total_gross' => ApiData::rupiah((int) $orders->sum('grand_total')),
+                'total_gross_value' => (int) $orders->sum('grand_total'),
                 'total_shipping_fee' => ApiData::rupiah((int) $orders->sum('shipping_total')),
                 'total_shipping_fee_value' => (int) $orders->sum('shipping_total'),
                 'total_cashback' => ApiData::rupiah((int) $orders->sum('shipping_cashback')),
