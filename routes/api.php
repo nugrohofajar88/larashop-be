@@ -8,6 +8,7 @@ use App\Http\Controllers\Api\AdminDashboardController;
 use App\Http\Controllers\Api\AdminOrderController;
 use App\Http\Controllers\Api\AdminPaymentAccountController;
 use App\Http\Controllers\Api\AdminProductController;
+use App\Http\Controllers\Api\AdminRajaOngkirBalanceController;
 use App\Http\Controllers\Api\AdminReportController;
 use App\Http\Controllers\Api\AdminSettingController;
 use App\Http\Controllers\Api\AdminShipmentController;
@@ -85,6 +86,9 @@ Route::prefix('v1')->middleware('throttle:api')->group(function (): void {
         Route::get('/reports/shipping', [AdminReportController::class, 'shipping']);
         Route::get('/reports/stock', [AdminReportController::class, 'stock']);
         Route::get('/reports/customers', [AdminReportController::class, 'customers']);
+        Route::get('/rajaongkir-balance', [AdminRajaOngkirBalanceController::class, 'index']);
+        Route::post('/rajaongkir-balance/topups', [AdminRajaOngkirBalanceController::class, 'storeTopup']);
+        Route::delete('/rajaongkir-balance/topups/{topup}', [AdminRajaOngkirBalanceController::class, 'destroyTopup']);
         Route::get('/accounts', [AdminAccountController::class, 'index']);
         Route::post('/accounts', [AdminAccountController::class, 'store']);
         Route::get('/accounts/{account}', [AdminAccountController::class, 'show']);
