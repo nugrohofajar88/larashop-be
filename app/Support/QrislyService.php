@@ -3,6 +3,7 @@
 namespace App\Support;
 
 use App\Models\Order;
+use App\Models\QrisGenerationLog;
 use App\Models\Setting;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Http;
@@ -230,6 +231,11 @@ class QrislyService
             'qris_status' => $result['payment_status'] ?? 'unpaid',
             'qris_expired_at' => $expiry,
         ]);
+
+        // Catat generate BARU (bukan reuse) - tiap generate kena Rp100 dipotong dari
+        // saldo deposit RajaOngkir, dipakai buat rekonsiliasi saldo (lihat halaman
+        // Saldo RajaOngkir).
+        QrisGenerationLog::query()->create(['order_id' => $order->id]);
 
         return [
             'ok' => true,
