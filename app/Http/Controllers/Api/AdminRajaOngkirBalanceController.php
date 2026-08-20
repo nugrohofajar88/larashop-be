@@ -25,11 +25,19 @@ class AdminRajaOngkirBalanceController extends Controller
         $topups = RajaOngkirTopup::query()->orderByDesc('topup_date')->orderByDesc('id')->get();
         $totalTopup = (int) $topups->sum('amount');
 
-        // Ongkir yang beneran kepotong dari saldo = order yang SUDAH punya AWB
-        // (berhasil di-booking) - order yang gagal booking belum kena potong apa pun.
-        $totalOngkir = (int) Order::query()
+        // Ongkir yang beneran kepotong dari saldo - HANYA order NON-COD yang sudah
+        // punya AWB (berhasil di-booking). Order COD TIDAK masuk sini - potongan
+        // ongkir mereka sudah otomatis ke-netto dalam 1 transaksi "COD Diterima"
+        // (lihat $totalCodRemitted di bawah), jadi kalau ikut dihitung di sini akan
+        // dobel. Debit yg beneran kepotong = shipping_total DIKURANGI cashback (bukan
+        // shipping_total mentah) - tervalidasi cocok persis ke data mutasi asli
+        // RajaOngkir (20 Agustus 2026).
+        $nonCodShipped = Order::query()
             ->whereNotNull('awb')->where('awb', '!=', '')
-            ->sum('shipping_total');
+            ->where('payment_method', '!=', 'COD')
+            ->get(['shipping_total', 'shipping_cashback']);
+        $totalOngkir = (int) $nonCodShipped->sum(fn (Order $o): int => $o->shipping_total - $o->shipping_cashback
+        );
 
         $qrisCount = QrisGenerationLog::query()->count();
         $totalQrisFee = (int) QrisGenerationLog::query()->sum('fee');
