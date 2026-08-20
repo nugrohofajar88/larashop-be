@@ -100,6 +100,7 @@ class AdminAccountingController extends Controller
         })->values()->all();
 
         $totalNet = collect($rows)->sum('profit_loss_value');
+        $totalNetIncome = collect($rows)->sum('net_value');
         $cuanCount = collect($rows)->where('status', 'CUAN')->count();
         $impasCount = collect($rows)->where('status', 'IMPAS')->count();
         $cuanTotal = (int) collect($rows)->where('status', 'CUAN')->sum('profit_loss_value');
@@ -135,6 +136,8 @@ class AdminAccountingController extends Controller
                 'boncos_total' => ApiData::rupiah($boncosTotal),
                 'total_net' => ApiData::rupiah((int) $totalNet),
                 'total_net_value' => (int) $totalNet,
+                'total_net_income' => ApiData::rupiah((int) $totalNetIncome),
+                'total_net_income_value' => (int) $totalNetIncome,
                 'total_gross' => ApiData::rupiah((int) $orders->sum('grand_total')),
                 'total_gross_value' => (int) $orders->sum('grand_total'),
                 'total_shipping_fee' => ApiData::rupiah((int) $orders->sum('shipping_total')),
