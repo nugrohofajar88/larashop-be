@@ -8,6 +8,7 @@ use App\Http\Controllers\Api\AdminDashboardController;
 use App\Http\Controllers\Api\AdminOrderController;
 use App\Http\Controllers\Api\AdminPaymentAccountController;
 use App\Http\Controllers\Api\AdminProductController;
+use App\Http\Controllers\Api\AdminReportController;
 use App\Http\Controllers\Api\AdminSettingController;
 use App\Http\Controllers\Api\AdminShipmentController;
 use App\Http\Controllers\Api\AuthController;
@@ -80,6 +81,10 @@ Route::prefix('v1')->middleware('throttle:api')->group(function (): void {
     Route::prefix('admin')->middleware(['auth:sanctum', 'role:admin'])->group(function (): void {
         Route::get('/dashboard', [AdminDashboardController::class, 'index']);
         Route::get('/accounting', [AdminAccountingController::class, 'index']);
+        Route::get('/reports/products', [AdminReportController::class, 'products']);
+        Route::get('/reports/shipping', [AdminReportController::class, 'shipping']);
+        Route::get('/reports/stock', [AdminReportController::class, 'stock']);
+        Route::get('/reports/customers', [AdminReportController::class, 'customers']);
         Route::get('/accounts', [AdminAccountController::class, 'index']);
         Route::post('/accounts', [AdminAccountController::class, 'store']);
         Route::get('/accounts/{account}', [AdminAccountController::class, 'show']);
