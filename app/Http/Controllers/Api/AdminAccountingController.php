@@ -61,11 +61,13 @@ class AdminAccountingController extends Controller
             $shippingCashback = (int) $order->shipping_cashback;
             $uniqueCode = (int) $order->unique_code;
             // "Net" = pendapatan riil dari transaksi ini (uang yang beneran diterima) -
-            // items_total & unique_code TETAP masuk (itu duit yang beneran diterima),
-            // cuma shipping_total & cod_service_fee yg keluar (lewat ke kurir/potongan
-            // COD). Formula ini sengaja SAMA dgn "Potential Income" & tidak bergantung
-            // mode buyer/seller, supaya bisa dicocokkan langsung ke dashboard RajaOngkir.
-            $net = $gross - $shippingTotal - $codServiceFee + $shippingCashback;
+            // items_total TETAP masuk (itu duit yang beneran diterima), tapi unique_code
+            // dikeluarkan (walau ikut kebayar customer via grand_total, ujungnya jadi
+            // saldo/milik pembeli, bukan pendapatan penjual) - sama halnya shipping_total
+            // & cod_service_fee yg keluar (lewat ke kurir/potongan COD). Formula ini
+            // konsisten dgn "Potential Income" untuk order COD (unique_code selalu 0 di
+            // COD), jadi tetap cocok dicocokkan ke dashboard RajaOngkir untuk order COD.
+            $net = $gross - $shippingTotal - $codServiceFee + $shippingCashback - $uniqueCode;
 
             // "Untung/Rugi" = keuntungan penjual senyatanya - items_total, shipping_total,
             // & unique_code dikeluarkan (ketiganya bukan keuntungan penjual: nilai produk,
