@@ -61,16 +61,15 @@ class AdminRajaOngkirBalanceController extends Controller
         $totalCodRemitted = (int) $remittedCod->sum(fn (Order $o): int => $o->grand_total - $o->shipping_total - $o->cod_service_fee + $o->shipping_cashback
         );
 
-        // Dana COD yang masih di jalan - order sudah "paid" (perlu dikirim), "processing"
-        // (menunggu penjemputan), atau "shipped" (dalam pengiriman), belum "completed".
-        // Ikut dikurangi dari $estimatedBalance (Estimasi Saldo ditampilkan net setelah
-        // dikurangi potensi dana yang masih di jalan ini). Formula sama persis dgn
-        // Potential Income di AdminAccountingController (tervalidasi cocok ke dashboard
-        // RajaOngkir/Komerce), bedanya di sini scope status-nya lebih luas (paid s.d.
-        // shipped, bukan cuma shipped) karena mencakup seluruh order COD yang belum diremit.
+        // Dana COD yang benar-benar "dalam perjalanan" - HANYA order "shipped" (paket
+        // sudah diserahterimakan ke kurir, ada AWB). Order "paid"/"processing" belum
+        // dikirim sama sekali (bahkan kalaupun sudah ada AWB dibuat lebih awal), jadi
+        // belum relevan disebut "dalam perjalanan". Ikut dikurangi dari $estimatedBalance.
+        // Formula sama persis dgn Potential Income di AdminAccountingController
+        // (tervalidasi cocok ke dashboard RajaOngkir/Komerce).
         $inTransitCod = Order::query()
             ->where('payment_method', 'COD')
-            ->whereIn('status', ['paid', 'processing', 'shipped'])
+            ->where('status', 'shipped')
             ->get(['grand_total', 'shipping_total', 'cod_service_fee', 'shipping_cashback']);
         $codInTransit = (int) $inTransitCod->sum(fn (Order $o): int => $o->grand_total - $o->shipping_total - $o->cod_service_fee + $o->shipping_cashback
         );
