@@ -7,6 +7,7 @@ use App\Http\Controllers\Api\AdminCustomerController;
 use App\Http\Controllers\Api\AdminDashboardController;
 use App\Http\Controllers\Api\AdminOrderController;
 use App\Http\Controllers\Api\AdminPaymentAccountController;
+use App\Http\Controllers\Api\AdminPushSubscriptionController;
 use App\Http\Controllers\Api\AdminProductController;
 use App\Http\Controllers\Api\AdminRajaOngkirBalanceController;
 use App\Http\Controllers\Api\AdminReportController;
@@ -90,6 +91,9 @@ Route::prefix('v1')->middleware('throttle:api')->group(function (): void {
         Route::post('/rajaongkir-balance/topups', [AdminRajaOngkirBalanceController::class, 'storeTopup']);
         Route::delete('/rajaongkir-balance/topups/{topup}', [AdminRajaOngkirBalanceController::class, 'destroyTopup']);
         Route::post('/rajaongkir-balance/sync-qris', [AdminRajaOngkirBalanceController::class, 'syncQris']);
+        Route::get('/push-subscriptions/public-key', [AdminPushSubscriptionController::class, 'publicKey']);
+        Route::post('/push-subscriptions', [AdminPushSubscriptionController::class, 'store']);
+        Route::delete('/push-subscriptions', [AdminPushSubscriptionController::class, 'destroy']);
         Route::get('/accounts', [AdminAccountController::class, 'index']);
         Route::post('/accounts', [AdminAccountController::class, 'store']);
         Route::get('/accounts/{account}', [AdminAccountController::class, 'show']);

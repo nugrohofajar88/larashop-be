@@ -95,6 +95,20 @@ class OrderPaymentService
             ];
         }
 
+        // Notif push ke admin (PWA) - order baru siap diproses. Independen dari hasil
+        // booking Komerce di bawah (admin tetap perlu tahu meski booking-nya gagal).
+        // Dibungkus try/catch - kegagalan kirim notif TIDAK BOLEH menggagalkan validasi
+        // order (sama seperti booking Komerce, ini best-effort).
+        try {
+            app(\App\Support\PushNotificationService::class)->notifyAdmins(
+                'Order baru: '.$order->code,
+                'Rp'.number_format((int) $order->grand_total, 0, ',', '.').' - '.($order->recipient_name ?? 'Pelanggan'),
+                ['url' => '/admin/orders/'.$order->code]
+            );
+        } catch (\Throwable $e) {
+            report($e);
+        }
+
         // Auto-booking ekspedisi via Komerce (store order) — kalau diaktifkan.
         // Dilakukan SETELAH validasi commit, jadi validasi tetap sukses walau booking gagal.
         $bookingMessage = null;

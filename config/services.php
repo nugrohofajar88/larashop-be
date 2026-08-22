@@ -88,6 +88,15 @@ return [
         'driver' => env('WHATSAPP_DRIVER', 'wablas'),
     ],
 
+    // Push notification browser (PWA admin) - VAPID keypair, generate sekali pakai
+    // Minishlink\WebPush\VAPID::createVapidKeys(), simpan permanen (jangan di-generate
+    // ulang - subscription lama jadi tidak valid kalau key berubah).
+    'web_push' => [
+        'subject' => env('WEB_PUSH_SUBJECT', 'mailto:admin@akartanikimia.com'),
+        'public_key' => env('WEB_PUSH_PUBLIC_KEY'),
+        'private_key' => env('WEB_PUSH_PRIVATE_KEY'),
+    ],
+
     'wablas' => [
         'base_url' => env('WABLAS_BASE_URL', 'https://wablas.com'),
         'token' => env('WABLAS_TOKEN'),

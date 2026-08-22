@@ -26,6 +26,40 @@ class AppServiceProvider extends ServiceProvider
                     : WablasService::class
             );
         });
+
+        // WORKAROUND SEMENTARA (lihat catatan di bawah): daftarkan PSR-4 manual utk
+        // minishlink/web-push & dependensinya. `composer dump-autoload` di lingkungan
+        // dev ini hang terus (belum diketahui sebabnya) sesudah `composer require`,
+        // jadi vendor/composer/autoload_static.php belum ke-update walau paket-nya
+        // sudah kesimpan di vendor/. Aman dihapus begitu composer normal lagi/deploy
+        // production jalanin composer install (autoloader Composer asli akan lebih
+        // dulu resolve class-nya, shim ini otomatis gak kepakai lagi).
+        spl_autoload_register(function (string $class): void {
+            static $map = [
+                'Minishlink\\WebPush\\' => 'minishlink/web-push/src/',
+                'Http\\Discovery\\' => 'php-http/discovery/src/',
+                'Http\\Client\\' => 'php-http/httplug/src/',
+                'Http\\Promise\\' => 'php-http/promise/src/',
+                'SpomkyLabs\\Pki\\' => 'spomky-labs/pki-framework/src/',
+                'Jose\\Component\\' => 'web-token/jwt-library/',
+                'Base64Url\\' => 'spomky-labs/base64url/src/',
+            ];
+
+            foreach ($map as $prefix => $relativeDir) {
+                if (! str_starts_with($class, $prefix)) {
+                    continue;
+                }
+
+                $path = base_path('vendor/'.$relativeDir)
+                    .str_replace('\\', '/', substr($class, strlen($prefix))).'.php';
+
+                if (is_file($path)) {
+                    require $path;
+                }
+
+                return;
+            }
+        });
     }
 
     /**
