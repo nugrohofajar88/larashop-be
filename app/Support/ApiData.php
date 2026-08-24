@@ -423,7 +423,7 @@ class ApiData
         return [
             'id' => $order->id,
             'code' => $order->code,
-            'date' => $order->created_at?->translatedFormat('d F Y') ?? $order->created_at?->format('d M Y'),
+            'date' => $order->created_at?->translatedFormat('d M Y, H:i \W\I\B') ?? $order->created_at?->format('d M Y, H:i \W\I\B'),
             'status' => $order->status,
             'status_label' => self::orderStatusLabel($order->status, $order->payment_method),
             'total' => self::rupiah($order->grand_total),
