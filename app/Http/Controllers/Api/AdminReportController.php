@@ -86,6 +86,82 @@ class AdminReportController extends Controller
     }
 
     /**
+     * Laporan tren penjualan (harian/bulanan) - biar owner tahu ARAH bisnisnya
+     * (naik/turun), bukan cuma snapshot sesaat. Titik yang tidak ada order-nya
+     * tetap dimunculkan sbg 0 (bukan di-skip) supaya garis tren di grafik akurat.
+     */
+    public function trend(Request $request): JsonResponse
+    {
+        $granularity = $request->query('granularity', 'day') === 'month' ? 'month' : 'day';
+        $revenueDate = 'COALESCE(paid_at, created_at)';
+
+        if ($granularity === 'day') {
+            $periods = 30;
+            $start = now()->subDays($periods - 1)->startOfDay();
+            $end = now()->endOfDay();
+            $prevStart = $start->copy()->subDays($periods);
+            $prevEnd = $start->copy()->subSecond();
+            $format = '%Y-%m-%d';
+            $keys = collect(range(0, $periods - 1))->map(fn (int $i) => $start->copy()->addDays($i)->format('Y-m-d'));
+            $labelFor = fn (string $key) => Carbon::createFromFormat('Y-m-d', $key)->translatedFormat('d M');
+        } else {
+            $periods = 12;
+            $start = now()->subMonths($periods - 1)->startOfMonth();
+            $end = now()->endOfMonth();
+            $prevStart = $start->copy()->subMonths($periods)->startOfMonth();
+            $prevEnd = $start->copy()->subSecond();
+            $format = '%Y-%m';
+            $keys = collect(range(0, $periods - 1))->map(fn (int $i) => $start->copy()->addMonths($i)->format('Y-m'));
+            $labelFor = fn (string $key) => Carbon::createFromFormat('Y-m', $key)->translatedFormat('M Y');
+        }
+
+        $rows = DB::table('orders')
+            ->whereIn('status', self::PAID_STATUSES)
+            ->whereRaw("$revenueDate BETWEEN ? AND ?", [$start, $end])
+            ->selectRaw("DATE_FORMAT($revenueDate, '$format') as period_key, SUM(grand_total) as revenue, COUNT(*) as order_count")
+            ->groupBy('period_key')
+            ->get()
+            ->keyBy('period_key');
+
+        $data = $keys->map(function (string $key) use ($rows, $labelFor) {
+            $row = $rows->get($key);
+
+            return [
+                'period_key' => $key,
+                'period_label' => $labelFor($key),
+                'revenue_value' => (int) ($row->revenue ?? 0),
+                'revenue' => ApiData::rupiah((int) ($row->revenue ?? 0)),
+                'order_count' => (int) ($row->order_count ?? 0),
+            ];
+        })->values()->all();
+
+        $totalRevenue = (int) collect($data)->sum('revenue_value');
+        $totalOrders = (int) collect($data)->sum('order_count');
+
+        // Bandingkan ke periode SEBELUMNYA yang durasinya sama (mis. 30 hari
+        // terakhir vs 30 hari sebelum itu) - sinyal naik/turun buat owner.
+        $prevRevenue = (int) DB::table('orders')
+            ->whereIn('status', self::PAID_STATUSES)
+            ->whereRaw("$revenueDate BETWEEN ? AND ?", [$prevStart, $prevEnd])
+            ->sum('grand_total');
+
+        $growthPct = $prevRevenue > 0 ? round((($totalRevenue - $prevRevenue) / $prevRevenue) * 100, 1) : null;
+
+        return response()->json([
+            'data' => $data,
+            'meta' => [
+                'granularity' => $granularity,
+                'total_revenue' => ApiData::rupiah($totalRevenue),
+                'total_revenue_value' => $totalRevenue,
+                'total_orders' => $totalOrders,
+                'avg_revenue_per_period' => ApiData::rupiah($periods > 0 ? (int) round($totalRevenue / $periods) : 0),
+                'growth_pct' => $growthPct,
+                'prev_revenue_value' => $prevRevenue,
+            ],
+        ]);
+    }
+
+    /**
      * Laporan performa ekspedisi per kurir. Catatan keterbatasan data: kolom
      * shipment_note cuma nyimpen pesan TERAKHIR (bukan histori tiap percobaan
      * booking), jadi "gagal" di sini = order dalam periode yg SAAT INI masih

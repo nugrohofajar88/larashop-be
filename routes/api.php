@@ -83,6 +83,7 @@ Route::prefix('v1')->middleware('throttle:api')->group(function (): void {
     Route::prefix('admin')->middleware(['auth:sanctum', 'role:admin'])->group(function (): void {
         Route::get('/dashboard', [AdminDashboardController::class, 'index']);
         Route::get('/accounting', [AdminAccountingController::class, 'index']);
+        Route::get('/reports/trend', [AdminReportController::class, 'trend']);
         Route::get('/reports/products', [AdminReportController::class, 'products']);
         Route::get('/reports/shipping', [AdminReportController::class, 'shipping']);
         Route::get('/reports/stock', [AdminReportController::class, 'stock']);
