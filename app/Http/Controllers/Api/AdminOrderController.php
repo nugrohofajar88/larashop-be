@@ -14,23 +14,71 @@ use Illuminate\Validation\ValidationException;
 
 class AdminOrderController extends Controller
 {
-    public function index(): JsonResponse
+    public function index(Request $request): JsonResponse
     {
+        $status = $request->string('status')->toString();
+        $search = trim($request->string('search')->toString());
+        $perPage = (int) $request->integer('per_page', 20);
+
         // 'draft' = order belum disubmit pelanggan (keranjang/checkout belum selesai),
         // jangan tampilkan di daftar pesanan admin.
-        $orders = Order::query()
+        $query = Order::query()
             ->with(['items', 'user'])
+            ->where('status', '!=', 'draft');
+
+        if ($status !== '' && $status !== 'all') {
+            $query->where('status', $status);
+        }
+
+        if ($search !== '') {
+            $query->where(function ($q) use ($search) {
+                $q->where('code', 'like', "%{$search}%")
+                    ->orWhere('recipient_phone', 'like', "%{$search}%")
+                    ->orWhereHas('user', fn ($u) => $u->where('name', 'like', "%{$search}%"));
+            });
+        }
+
+        $paginator = $query->orderByDesc('id')->paginate($perPage);
+
+        // Hitungan per status TIDAK ikut kena filter status/search - dipakai utk badge
+        // jumlah di tab status & kartu statistik (harus tetap tunjukkan total global,
+        // bukan cuma yang kebetulan cocok dgn filter/halaman saat ini).
+        $statusCounts = Order::query()
             ->where('status', '!=', 'draft')
-            ->orderByDesc('id')
-            ->get();
+            ->select('status', DB::raw('count(*) as count'))
+            ->groupBy('status')
+            ->pluck('count', 'status');
 
         return response()->json([
-            'data' => $orders->map(fn (Order $order) => $this->orderWithAdminExtras($order))->values()->all(),
+            'data' => collect($paginator->items())->map(fn (Order $order) => $this->orderWithAdminExtras($order))->values()->all(),
+            'meta' => [
+                'current_page' => $paginator->currentPage(),
+                'last_page' => $paginator->lastPage(),
+                'per_page' => $paginator->perPage(),
+                'total' => $paginator->total(),
+                'status_counts' => $statusCounts,
+                'total_count' => (int) $statusCounts->sum(),
+            ],
         ]);
     }
 
     public function show(Order $order): JsonResponse
     {
+        $order->load(['items', 'user', 'trackings']);
+
+        return response()->json([
+            'data' => $this->orderWithAdminExtras($order),
+        ]);
+    }
+
+    /**
+     * Cari order via kode (bukan ID numerik) - dipakai FE (findOrderByCode) supaya
+     * tidak perlu fetch seluruh daftar order (yang sekarang di-paging) cuma buat
+     * resolve kode -> ID.
+     */
+    public function showByCode(string $code): JsonResponse
+    {
+        $order = Order::query()->where('code', strtoupper($code))->firstOrFail();
         $order->load(['items', 'user', 'trackings']);
 
         return response()->json([
