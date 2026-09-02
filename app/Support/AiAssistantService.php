@@ -56,6 +56,21 @@ class AiAssistantService
             return ['answer' => 'AI assistant belum dikonfigurasi (API key belum diisi).', 'queries' => []];
         }
 
+        try {
+            return $this->converse($question);
+        } catch (\Throwable $e) {
+            // Tangkap SEMUA kegagalan (koneksi putus, DNS gagal, timeout, dst) -
+            // bukan cuma HTTP non-2xx yg sudah ditangani di dalam converse().
+            // Tanpa ini, exception koneksi bakal jadi error 500 mentah ke admin.
+            Log::error('ai_assistant.exception', ['message' => $e->getMessage()]);
+
+            return ['answer' => 'Maaf, ada gangguan saat menghubungi AI assistant. Coba lagi nanti.', 'queries' => []];
+        }
+    }
+
+    /** @return array{answer:string, queries:array<int,string>} */
+    private function converse(string $question): array
+    {
         $messages = [
             ['role' => 'system', 'content' => file_get_contents(resource_path('ai/system-knowledge.md'))],
             ['role' => 'user', 'content' => $question],
