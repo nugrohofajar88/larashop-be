@@ -16,6 +16,7 @@
         "league/flysystem-aws-s3-v3": "^3.0",
         "masbug/flysystem-google-drive-ext": "^2.5",
         "minishlink/web-push": "^11.0",
+        "phpoffice/phpspreadsheet": "*",
         "picqer/php-barcode-generator": "^3.2",
         "setasign/fpdf": "^1.9",
         "setasign/fpdi": "^2.6"

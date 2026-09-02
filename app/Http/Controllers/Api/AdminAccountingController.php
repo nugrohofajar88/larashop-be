@@ -7,7 +7,10 @@ use App\Models\Order;
 use App\Support\ApiData;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\Response;
 use Illuminate\Support\Carbon;
+use PhpOffice\PhpSpreadsheet\Spreadsheet;
+use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 
 class AdminAccountingController extends Controller
 {
@@ -22,6 +25,119 @@ class AdminAccountingController extends Controller
     ];
 
     public function index(Request $request): JsonResponse
+    {
+        [$anchor, $mode, $paymentMethod] = $this->resolveFilters($request);
+        [$orders, $rows] = $this->buildRows($anchor, $mode, $paymentMethod);
+
+        $totalNet = collect($rows)->sum('profit_loss_value');
+        $totalNetIncome = collect($rows)->sum('net_value');
+        $cuanCount = collect($rows)->where('status', 'CUAN')->count();
+        $impasCount = collect($rows)->where('status', 'IMPAS')->count();
+        $cuanTotal = (int) collect($rows)->where('status', 'CUAN')->sum('profit_loss_value');
+        $boncosTotal = (int) collect($rows)->where('status', 'BONCOS')->sum('profit_loss_value');
+
+        // Snapshot real-time (BUKAN scoped ke bulan/filter di atas) - order COD yang
+        // masih "shipped" (dikirim, belum ditandai selesai). Uangnya masih dipegang
+        // kurir & belum diremit. Formula ini nyocokin persis ke "Potential Income" di
+        // dashboard RajaOngkir/Komerce: ongkir tidak ikut diremit (tetap punya kurir),
+        // sementara cashback ongkir ikut ditambahkan.
+        $inTransitCod = Order::query()
+            ->where('payment_method', 'COD')
+            ->where('status', 'shipped')
+            ->get(['grand_total', 'shipping_total', 'cod_service_fee', 'shipping_cashback']);
+
+        $potentialIncome = (int) $inTransitCod->sum(fn (Order $o): int => $o->grand_total - $o->shipping_total - $o->cod_service_fee + $o->shipping_cashback
+        );
+
+        return response()->json([
+            'data' => $rows,
+            'meta' => [
+                'month' => $anchor->format('Y-m'),
+                'month_label' => $anchor->translatedFormat('F Y'),
+                'mode' => $mode,
+                'payment_method' => $paymentMethod,
+                'count' => $orders->count(),
+                'cuan_count' => $cuanCount,
+                'impas_count' => $impasCount,
+                'boncos_count' => $orders->count() - $cuanCount - $impasCount,
+                'cuan_total_value' => $cuanTotal,
+                'cuan_total' => ApiData::rupiah($cuanTotal),
+                'boncos_total_value' => $boncosTotal,
+                'boncos_total' => ApiData::rupiah($boncosTotal),
+                'total_net' => ApiData::rupiah((int) $totalNet),
+                'total_net_value' => (int) $totalNet,
+                'total_net_income' => ApiData::rupiah((int) $totalNetIncome),
+                'total_net_income_value' => (int) $totalNetIncome,
+                'total_gross' => ApiData::rupiah((int) $orders->sum('grand_total')),
+                'total_gross_value' => (int) $orders->sum('grand_total'),
+                'total_shipping_fee' => ApiData::rupiah((int) $orders->sum('shipping_total')),
+                'total_shipping_fee_value' => (int) $orders->sum('shipping_total'),
+                'total_cashback' => ApiData::rupiah((int) $orders->sum('shipping_cashback')),
+                'total_cashback_value' => (int) $orders->sum('shipping_cashback'),
+                'total_cod_service_fee' => ApiData::rupiah((int) $orders->sum('cod_service_fee')),
+                'total_cod_service_fee_value' => (int) $orders->sum('cod_service_fee'),
+                'total_items' => ApiData::rupiah((int) $orders->sum('items_total')),
+                'total_items_value' => (int) $orders->sum('items_total'),
+                'potential_income' => ApiData::rupiah($potentialIncome),
+                'potential_income_value' => $potentialIncome,
+                'potential_income_count' => $inTransitCod->count(),
+            ],
+        ]);
+    }
+
+    /** Export tabel akuntansi (filter bulan/mode/metode yg sama dgn index()) jadi .xlsx. */
+    public function export(Request $request): Response
+    {
+        [$anchor, $mode, $paymentMethod] = $this->resolveFilters($request);
+        [, $rows] = $this->buildRows($anchor, $mode, $paymentMethod);
+
+        $spreadsheet = new Spreadsheet();
+        $sheet = $spreadsheet->getActiveSheet();
+        $sheet->setTitle('Akuntansi');
+
+        $headers = ['Order', 'AWB', 'Tanggal', 'Metode', 'Gross', 'Total Item', 'Shipping Fee', 'Fee COD', 'Cashback', 'Kode Unik', 'Net', 'Margin', 'Status'];
+        $sheet->fromArray($headers, null, 'A1');
+        $sheet->getStyle('A1:M1')->getFont()->setBold(true);
+
+        $rowNum = 2;
+        foreach ($rows as $row) {
+            $sheet->fromArray([
+                $row['code'],
+                $row['awb'],
+                $row['date'],
+                $row['payment_method'],
+                $row['gross_value'],
+                $row['items_total_value'],
+                $row['shipping_total_value'],
+                $row['cod_service_fee_value'],
+                $row['shipping_cashback_value'],
+                $row['unique_code_pembeli_value'],
+                $row['net_value'],
+                $row['profit_loss_value'],
+                $row['status'],
+            ], null, "A{$rowNum}");
+            $rowNum++;
+        }
+
+        foreach (range('A', 'M') as $col) {
+            $sheet->getColumnDimension($col)->setAutoSize(true);
+        }
+
+        $filename = 'akuntansi-'.$anchor->format('Y-m').'.xlsx';
+
+        $writer = new Xlsx($spreadsheet);
+        ob_start();
+        $writer->save('php://output');
+        $content = ob_get_clean();
+
+        return response($content, 200, [
+            'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'Content-Disposition' => "attachment; filename=\"{$filename}\"",
+        ]);
+    }
+
+    /** @return array{0: Carbon, 1: string, 2: string} */
+    private function resolveFilters(Request $request): array
     {
         $month = trim((string) $request->query('month', ''));
         // seller (default) = cashback ongkir tetap jadi keuntungan penjual.
@@ -38,6 +154,12 @@ class AdminAccountingController extends Controller
             $anchor = Carbon::now();
         }
 
+        return [$anchor, $mode, $paymentMethod];
+    }
+
+    /** @return array{0: \Illuminate\Support\Collection<int,Order>, 1: array<int,array>} */
+    private function buildRows(Carbon $anchor, string $mode, string $paymentMethod): array
+    {
         $start = $anchor->copy()->startOfMonth();
         $end = $anchor->copy()->endOfMonth();
 
@@ -101,59 +223,6 @@ class AdminAccountingController extends Controller
             ];
         })->values()->all();
 
-        $totalNet = collect($rows)->sum('profit_loss_value');
-        $totalNetIncome = collect($rows)->sum('net_value');
-        $cuanCount = collect($rows)->where('status', 'CUAN')->count();
-        $impasCount = collect($rows)->where('status', 'IMPAS')->count();
-        $cuanTotal = (int) collect($rows)->where('status', 'CUAN')->sum('profit_loss_value');
-        $boncosTotal = (int) collect($rows)->where('status', 'BONCOS')->sum('profit_loss_value');
-
-        // Snapshot real-time (BUKAN scoped ke bulan/filter di atas) - order COD yang
-        // masih "shipped" (dikirim, belum ditandai selesai). Uangnya masih dipegang
-        // kurir & belum diremit. Formula ini nyocokin persis ke "Potential Income" di
-        // dashboard RajaOngkir/Komerce: ongkir tidak ikut diremit (tetap punya kurir),
-        // sementara cashback ongkir ikut ditambahkan.
-        $inTransitCod = Order::query()
-            ->where('payment_method', 'COD')
-            ->where('status', 'shipped')
-            ->get(['grand_total', 'shipping_total', 'cod_service_fee', 'shipping_cashback']);
-
-        $potentialIncome = (int) $inTransitCod->sum(fn (Order $o): int => $o->grand_total - $o->shipping_total - $o->cod_service_fee + $o->shipping_cashback
-        );
-
-        return response()->json([
-            'data' => $rows,
-            'meta' => [
-                'month' => $anchor->format('Y-m'),
-                'month_label' => $anchor->translatedFormat('F Y'),
-                'mode' => $mode,
-                'payment_method' => $paymentMethod,
-                'count' => $orders->count(),
-                'cuan_count' => $cuanCount,
-                'impas_count' => $impasCount,
-                'boncos_count' => $orders->count() - $cuanCount - $impasCount,
-                'cuan_total_value' => $cuanTotal,
-                'cuan_total' => ApiData::rupiah($cuanTotal),
-                'boncos_total_value' => $boncosTotal,
-                'boncos_total' => ApiData::rupiah($boncosTotal),
-                'total_net' => ApiData::rupiah((int) $totalNet),
-                'total_net_value' => (int) $totalNet,
-                'total_net_income' => ApiData::rupiah((int) $totalNetIncome),
-                'total_net_income_value' => (int) $totalNetIncome,
-                'total_gross' => ApiData::rupiah((int) $orders->sum('grand_total')),
-                'total_gross_value' => (int) $orders->sum('grand_total'),
-                'total_shipping_fee' => ApiData::rupiah((int) $orders->sum('shipping_total')),
-                'total_shipping_fee_value' => (int) $orders->sum('shipping_total'),
-                'total_cashback' => ApiData::rupiah((int) $orders->sum('shipping_cashback')),
-                'total_cashback_value' => (int) $orders->sum('shipping_cashback'),
-                'total_cod_service_fee' => ApiData::rupiah((int) $orders->sum('cod_service_fee')),
-                'total_cod_service_fee_value' => (int) $orders->sum('cod_service_fee'),
-                'total_items' => ApiData::rupiah((int) $orders->sum('items_total')),
-                'total_items_value' => (int) $orders->sum('items_total'),
-                'potential_income' => ApiData::rupiah($potentialIncome),
-                'potential_income_value' => $potentialIncome,
-                'potential_income_count' => $inTransitCod->count(),
-            ],
-        ]);
+        return [$orders, $rows];
     }
 }

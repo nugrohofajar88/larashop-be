@@ -43,6 +43,11 @@ class AppServiceProvider extends ServiceProvider
                 'SpomkyLabs\\Pki\\' => 'spomky-labs/pki-framework/src/',
                 'Jose\\Component\\' => 'web-token/jwt-library/',
                 'Base64Url\\' => 'spomky-labs/base64url/src/',
+                'ZipStream\\' => 'maennchen/zipstream-php/src/',
+                'Complex\\' => 'markbaker/complex/classes/src/',
+                'Matrix\\' => 'markbaker/matrix/classes/src/',
+                'PhpOffice\\PhpSpreadsheet\\' => 'phpoffice/phpspreadsheet/src/PhpSpreadsheet/',
+                'Composer\\Pcre\\' => 'composer/pcre/src/',
             ];
 
             foreach ($map as $prefix => $relativeDir) {
