@@ -83,6 +83,12 @@ return [
         'model' => env('OPENAI_MODEL', 'gpt-4o-mini'),
     ],
 
+    // AI assistant admin (tanya-jawab data bisnis, baca-saja) - lihat AiAssistantService.
+    'groq' => [
+        'api_key' => env('GROQ_API_KEY'),
+        'model' => env('GROQ_MODEL', 'openai/gpt-oss-120b'),
+    ],
+
     // Gateway WhatsApp aktif: 'wablas' atau 'fonnte'.
     'whatsapp' => [
         'driver' => env('WHATSAPP_DRIVER', 'wablas'),

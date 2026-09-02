@@ -64,6 +64,24 @@ return [
             ]) : [],
         ],
 
+        // Koneksi READ-ONLY khusus AI assistant (lihat AiAssistantService) - user
+        // MySQL-nya cuma punya izin SELECT ke tabel data bisnis yg di-whitelist
+        // (lihat migration create_v_users_safe_view & catatan setup di
+        // AiAssistantService). JANGAN pakai koneksi ini utk apa pun selain itu.
+        'ai_readonly' => [
+            'driver' => 'mysql',
+            'host' => env('DB_HOST', '127.0.0.1'),
+            'port' => env('DB_PORT', '3306'),
+            'database' => env('DB_DATABASE', 'laravel'),
+            'username' => env('AI_READONLY_DB_USERNAME', 'ai_readonly'),
+            'password' => env('AI_READONLY_DB_PASSWORD', ''),
+            'charset' => env('DB_CHARSET', 'utf8mb4'),
+            'collation' => env('DB_COLLATION', 'utf8mb4_unicode_ci'),
+            'prefix' => '',
+            'strict' => true,
+            'engine' => null,
+        ],
+
         'mariadb' => [
             'driver' => 'mariadb',
             'url' => env('DB_URL'),

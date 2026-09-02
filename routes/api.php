@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Api\AdminAccountController;
 use App\Http\Controllers\Api\AdminAccountingController;
+use App\Http\Controllers\Api\AdminAiAssistantController;
 use App\Http\Controllers\Api\AdminCategoryController;
 use App\Http\Controllers\Api\AdminCustomerController;
 use App\Http\Controllers\Api\AdminDashboardController;
@@ -84,6 +85,7 @@ Route::prefix('v1')->middleware('throttle:api')->group(function (): void {
         Route::get('/dashboard', [AdminDashboardController::class, 'index']);
         Route::get('/accounting', [AdminAccountingController::class, 'index']);
         Route::get('/reports/trend', [AdminReportController::class, 'trend']);
+        Route::post('/ai-assistant/ask', [AdminAiAssistantController::class, 'ask']);
         Route::get('/reports/products', [AdminReportController::class, 'products']);
         Route::get('/reports/shipping', [AdminReportController::class, 'shipping']);
         Route::get('/reports/stock', [AdminReportController::class, 'stock']);
