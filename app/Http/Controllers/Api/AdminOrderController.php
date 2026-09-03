@@ -9,9 +9,12 @@ use App\Support\ApiData;
 use App\Support\KomerceShipmentService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\Response;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
+use PhpOffice\PhpSpreadsheet\Spreadsheet;
+use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 
 class AdminOrderController extends Controller
 {
@@ -64,14 +67,14 @@ class AdminOrderController extends Controller
     }
 
     /**
-     * Export data penjualan sebagai CSV: marketplace, order_no, resi, sku, nama_produk, qty.
-     * Semua order KECUALI cancelled & draft (draft = keranjang belum disubmit, bukan
-     * penjualan) - order yang belum punya AWB tetap ikut, kolom resi dikosongkan.
-     * Satu baris per order_item (bukan per order) supaya sku & qty presisi.
-     * 'marketplace' selalu 'Website' - larashop cuma satu channel, bukan
-     * aggregator multi-marketplace seperti Shopee/TikTok Shop.
+     * Export data penjualan sebagai Excel (.xlsx): marketplace, order_no, resi, sku,
+     * nama_produk, qty. Semua order KECUALI cancelled & draft (draft = keranjang belum
+     * disubmit, bukan penjualan) - order yang belum punya AWB tetap ikut, kolom resi
+     * dikosongkan. Satu baris per order_item (bukan per order) supaya sku & qty presisi.
+     * 'marketplace' selalu 'Website' - larashop cuma satu channel, bukan aggregator
+     * multi-marketplace seperti Shopee/TikTok Shop.
      */
-    public function export(Request $request): \Illuminate\Http\Response
+    public function export(Request $request): Response
     {
         $validated = $request->validate([
             'date_from' => ['nullable', 'date'],
@@ -86,30 +89,42 @@ class AdminOrderController extends Controller
             ->orderBy('created_at')
             ->get();
 
-        $csv = fopen('php://temp', 'r+');
-        fputcsv($csv, ['marketplace', 'order_no', 'resi', 'sku', 'nama_produk', 'qty']);
+        $spreadsheet = new Spreadsheet();
+        $sheet = $spreadsheet->getActiveSheet();
+        $sheet->setTitle('Penjualan');
 
+        $headers = ['marketplace', 'order_no', 'resi', 'sku', 'nama_produk', 'qty'];
+        $sheet->fromArray($headers, null, 'A1');
+        $sheet->getStyle('A1:F1')->getFont()->setBold(true);
+
+        $rowNum = 2;
         foreach ($orders as $order) {
             foreach ($order->items as $item) {
-                fputcsv($csv, [
+                $sheet->fromArray([
                     'Website',
                     $order->code,
                     $order->awb,
                     $item->product_sku,
                     trim($item->product_name.($item->variant_label ? ' ('.$item->variant_label.')' : '')),
                     $item->quantity,
-                ]);
+                ], null, "A{$rowNum}");
+                $rowNum++;
             }
         }
 
-        rewind($csv);
-        $content = stream_get_contents($csv);
-        fclose($csv);
+        foreach (range('A', 'F') as $col) {
+            $sheet->getColumnDimension($col)->setAutoSize(true);
+        }
 
-        $filename = 'orders-penjualan-'.now()->format('Y-m-d_His').'.csv';
+        $filename = 'orders-penjualan-'.now()->format('Y-m-d_His').'.xlsx';
+
+        $writer = new Xlsx($spreadsheet);
+        ob_start();
+        $writer->save('php://output');
+        $content = ob_get_clean();
 
         return response($content, 200, [
-            'Content-Type' => 'text/csv',
+            'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             'Content-Disposition' => "attachment; filename=\"{$filename}\"",
         ]);
     }
