@@ -9,6 +9,7 @@ use App\Support\ApiData;
 use App\Support\KomerceShipmentService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -59,6 +60,57 @@ class AdminOrderController extends Controller
                 'status_counts' => $statusCounts,
                 'total_count' => (int) $statusCounts->sum(),
             ],
+        ]);
+    }
+
+    /**
+     * Export data penjualan sebagai CSV: marketplace, order_no, resi, sku, nama_produk, qty.
+     * Semua order KECUALI cancelled & draft (draft = keranjang belum disubmit, bukan
+     * penjualan) - order yang belum punya AWB tetap ikut, kolom resi dikosongkan.
+     * Satu baris per order_item (bukan per order) supaya sku & qty presisi.
+     * 'marketplace' selalu 'Website' - larashop cuma satu channel, bukan
+     * aggregator multi-marketplace seperti Shopee/TikTok Shop.
+     */
+    public function export(Request $request): \Illuminate\Http\Response
+    {
+        $validated = $request->validate([
+            'date_from' => ['nullable', 'date'],
+            'date_to' => ['nullable', 'date'],
+        ]);
+
+        $orders = Order::query()
+            ->with('items')
+            ->whereNotIn('status', ['cancelled', 'draft'])
+            ->when(! empty($validated['date_from']), fn ($q) => $q->where('created_at', '>=', Carbon::parse($validated['date_from'])->startOfDay()))
+            ->when(! empty($validated['date_to']), fn ($q) => $q->where('created_at', '<=', Carbon::parse($validated['date_to'])->endOfDay()))
+            ->orderBy('created_at')
+            ->get();
+
+        $csv = fopen('php://temp', 'r+');
+        fputcsv($csv, ['marketplace', 'order_no', 'resi', 'sku', 'nama_produk', 'qty']);
+
+        foreach ($orders as $order) {
+            foreach ($order->items as $item) {
+                fputcsv($csv, [
+                    'Website',
+                    $order->code,
+                    $order->awb,
+                    $item->product_sku,
+                    trim($item->product_name.($item->variant_label ? ' ('.$item->variant_label.')' : '')),
+                    $item->quantity,
+                ]);
+            }
+        }
+
+        rewind($csv);
+        $content = stream_get_contents($csv);
+        fclose($csv);
+
+        $filename = 'orders-penjualan-'.now()->format('Y-m-d_His').'.csv';
+
+        return response($content, 200, [
+            'Content-Type' => 'text/csv',
+            'Content-Disposition' => "attachment; filename=\"{$filename}\"",
         ]);
     }
 

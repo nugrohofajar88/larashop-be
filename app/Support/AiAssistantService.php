@@ -2,6 +2,7 @@
 
 namespace App\Support;
 
+use App\Models\Order;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -26,6 +27,15 @@ use Illuminate\Support\Facades\Log;
  * Simpan usernamenya/passwordnya di AI_READONLY_DB_USERNAME / AI_READONLY_DB_PASSWORD.
  * Kalau hosting cPanel cuma bisa grant SELECT utk SATU DATABASE (bukan per-tabel),
  * proteksi #2 (app-level) jadi lapisan utama - jangan skip.
+ *
+ * Selain run_readonly_query, ada tool KEDUA `track_awb` - ini BUKAN baca dari
+ * tabel `order_trackings` (itu cuma log internal, bisa telat/tidak lengkap
+ * dibanding status asli di kurir). track_awb manggil ShippingService::trackWaybill()
+ * yang cURL LANGSUNG ke API RajaOngkir (live), sama persis dgn yang dipakai
+ * customer-facing tracking (OrderController::track). Query order lewat Eloquent
+ * (bukan SQL dari model) - args dari model cuma order_code/awb/courier (string),
+ * jadi tidak lewat proteksi #1/#2 di atas tapi tidak butuh, karena tidak ada SQL
+ * mentah yang disusun AI di jalur ini.
  */
 class AiAssistantService
 {
@@ -76,20 +86,38 @@ class AiAssistantService
             ['role' => 'user', 'content' => $question],
         ];
 
-        $tools = [[
-            'type' => 'function',
-            'function' => [
-                'name' => 'run_readonly_query',
-                'description' => 'Jalankan 1 query SQL SELECT read-only ke database toko untuk menjawab pertanyaan data.',
-                'parameters' => [
-                    'type' => 'object',
-                    'properties' => [
-                        'sql' => ['type' => 'string', 'description' => 'Query SQL SELECT tunggal'],
+        $tools = [
+            [
+                'type' => 'function',
+                'function' => [
+                    'name' => 'run_readonly_query',
+                    'description' => 'Jalankan 1 query SQL SELECT read-only ke database toko untuk menjawab pertanyaan data.',
+                    'parameters' => [
+                        'type' => 'object',
+                        'properties' => [
+                            'sql' => ['type' => 'string', 'description' => 'Query SQL SELECT tunggal'],
+                        ],
+                        'required' => ['sql'],
                     ],
-                    'required' => ['sql'],
                 ],
             ],
-        ]];
+            [
+                'type' => 'function',
+                'function' => [
+                    'name' => 'track_awb',
+                    'description' => 'Lacak status pengiriman TERKINI (live) langsung dari API kurir (RajaOngkir), BUKAN dari tabel order_trackings di database (itu cuma log internal, bisa telat/tidak lengkap). Pakai ini kalau admin tanya "posisi/status resi/pengiriman sekarang" untuk satu order. Isi order_code (disarankan - awb/kurir/no hp penerima diambil otomatis dari order itu), atau isi awb+courier manual kalau order_code tidak diketahui.',
+                    'parameters' => [
+                        'type' => 'object',
+                        'properties' => [
+                            'order_code' => ['type' => 'string', 'description' => 'Kode order (mis. ATK20260903-00012). Disarankan - kalau diisi, awb/courier/no hp penerima diambil otomatis dari order ini.'],
+                            'awb' => ['type' => 'string', 'description' => 'Nomor resi/AWB manual - hanya kalau order_code tidak diisi/tidak diketahui.'],
+                            'courier' => ['type' => 'string', 'description' => 'Kode kurir RajaOngkir huruf kecil (jne/jnt/sicepat/ide/sap/ninja/tiki/lion/anteraja/pos/wahana/first) - wajib kalau pakai awb manual.'],
+                        ],
+                        'required' => [],
+                    ],
+                ],
+            ],
+        ];
 
         $executedQueries = [];
 
@@ -114,16 +142,23 @@ class AiAssistantService
             $messages[] = $message;
 
             foreach ($toolCalls as $toolCall) {
+                $name = (string) data_get($toolCall, 'function.name');
                 $args = json_decode(data_get($toolCall, 'function.arguments', '{}'), true) ?? [];
-                $sql = trim((string) ($args['sql'] ?? ''));
-                if ($sql !== '') {
-                    $executedQueries[] = $sql;
+
+                if ($name === 'track_awb') {
+                    $content = $this->trackAwb($args);
+                } else {
+                    $sql = trim((string) ($args['sql'] ?? ''));
+                    if ($sql !== '') {
+                        $executedQueries[] = $sql;
+                    }
+                    $content = $this->runQuery($sql);
                 }
 
                 $messages[] = [
                     'role' => 'tool',
                     'tool_call_id' => $toolCall['id'],
-                    'content' => $this->runQuery($sql),
+                    'content' => $content,
                 ];
             }
         }
@@ -159,6 +194,50 @@ class AiAssistantService
         }
 
         return $response;
+    }
+
+    /**
+     * Handler tool track_awb - cURL LANGSUNG ke RajaOngkir (live), sama pola
+     * dgn OrderController::track (customer-facing). Args dari model cuma
+     * dipakai sbg nilai (order_code lewat Eloquent where(), awb/courier
+     * diteruskan sbg query string ke RajaOngkir) - tidak ada SQL yang disusun
+     * di jalur ini, jadi tidak butuh proteksi ALLOWED_TABLES/BLOCKED_KEYWORDS.
+     */
+    private function trackAwb(array $args): string
+    {
+        $orderCode = strtoupper(trim((string) ($args['order_code'] ?? '')));
+        $awb = trim((string) ($args['awb'] ?? ''));
+        $courier = strtolower(trim((string) ($args['courier'] ?? '')));
+        $lastPhone = null;
+
+        if ($orderCode !== '') {
+            $order = Order::query()->where('code', $orderCode)->first();
+            if ($order === null) {
+                return "ERROR: order dengan kode {$orderCode} tidak ditemukan.";
+            }
+
+            $awb = $awb !== '' ? $awb : trim((string) $order->awb);
+            $courier = $courier !== '' ? $courier : ShippingService::courierCode($order->shipping_service_name);
+            $lastPhone = substr((string) preg_replace('/\D/', '', (string) $order->recipient_phone), -5);
+        }
+
+        if ($awb === '' || $courier === '') {
+            return 'ERROR: AWB atau kode kurir belum diketahui. Kalau tahu kode order-nya, isi order_code saja (awb & kurir diambil otomatis). Kalau order belum di-booking ke ekspedisi, memang belum ada AWB untuk dilacak.';
+        }
+
+        try {
+            $result = app(ShippingService::class)->trackWaybill($awb, $courier, $lastPhone);
+        } catch (\Throwable $e) {
+            Log::error('ai_assistant.track_awb_exception', ['awb' => $awb, 'courier' => $courier, 'message' => $e->getMessage()]);
+
+            return 'ERROR: gangguan saat menghubungi API tracking RajaOngkir. Coba lagi nanti.';
+        }
+
+        if (! ($result['ok'] ?? false)) {
+            return 'ERROR melacak resi '.$awb.' ('.$courier.'): '.($result['message'] ?? 'tidak diketahui').'.';
+        }
+
+        return json_encode($result['data'], JSON_PRETTY_PRINT | JSON_PARTIAL_OUTPUT_ON_ERROR);
     }
 
     private function runQuery(string $sql): string
