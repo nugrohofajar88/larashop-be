@@ -54,20 +54,36 @@ class AiAssistantService
 
     private const MAX_ROWS = 200;
 
+    /**
+     * Batas riwayat percakapan yang diikutsertakan (3 pasang tanya-jawab = 6
+     * pesan) - FE (ai-assistant/index.blade.php) yang menyimpan & mengirim
+     * riwayatnya balik tiap request (asisten ini sendiri stateless, tidak
+     * simpan sesi di server). Dibatasi supaya tidak makin boros token tiap
+     * giliran (akun Groq ini limitnya cuma 8.000 TPM/organisasi - lihat
+     * catatan di kelas ini soal percobaan ganti model).
+     */
+    private const MAX_HISTORY_MESSAGES = 6;
+
     public function enabled(): bool
     {
         return filled(config('services.groq.api_key'));
     }
 
-    /** @return array{answer:string, queries:array<int,string>} */
-    public function ask(string $question): array
+    /**
+     * @param  array<int,array{role:string,content:string}>  $history  Riwayat
+     *   percakapan sebelumnya (role user/assistant berselang-seling), dikirim
+     *   FE - dipotong ke MAX_HISTORY_MESSAGES pesan TERAKHIR di sini juga
+     *   (independen dari validasi FE/controller, jaga-jaga).
+     * @return array{answer:string, queries:array<int,string>}
+     */
+    public function ask(string $question, array $history = []): array
     {
         if (! $this->enabled()) {
             return ['answer' => 'AI assistant belum dikonfigurasi (API key belum diisi).', 'queries' => []];
         }
 
         try {
-            return $this->converse($question);
+            return $this->converse($question, $history);
         } catch (\Throwable $e) {
             // Tangkap SEMUA kegagalan (koneksi putus, DNS gagal, timeout, dst) -
             // bukan cuma HTTP non-2xx yg sudah ditangani di dalam converse().
@@ -79,10 +95,20 @@ class AiAssistantService
     }
 
     /** @return array{answer:string, queries:array<int,string>} */
-    private function converse(string $question): array
+    private function converse(string $question, array $history = []): array
     {
+        $trimmedHistory = collect($history)
+            ->slice(-self::MAX_HISTORY_MESSAGES)
+            ->map(fn (array $m): array => [
+                'role' => $m['role'] === 'assistant' ? 'assistant' : 'user',
+                'content' => (string) $m['content'],
+            ])
+            ->values()
+            ->all();
+
         $messages = [
             ['role' => 'system', 'content' => file_get_contents(resource_path('ai/system-knowledge.md'))],
+            ...$trimmedHistory,
             ['role' => 'user', 'content' => $question],
         ];
 

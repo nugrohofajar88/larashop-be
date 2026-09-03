@@ -13,9 +13,14 @@ class AdminAiAssistantController extends Controller
     {
         $validated = $request->validate([
             'question' => ['required', 'string', 'max:1000'],
+            // Riwayat percakapan dari FE (asisten ini sendiri stateless) - dibatasi
+            // 6 pesan (3 pasang tanya-jawab), diperkuat lagi di AiAssistantService.
+            'history' => ['nullable', 'array', 'max:6'],
+            'history.*.role' => ['required_with:history', 'string', 'in:user,assistant'],
+            'history.*.content' => ['required_with:history', 'string', 'max:4000'],
         ]);
 
-        $result = $assistant->ask($validated['question']);
+        $result = $assistant->ask($validated['question'], $validated['history'] ?? []);
 
         return response()->json([
             'data' => [
