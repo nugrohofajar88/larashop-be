@@ -79,6 +79,7 @@ class WaOrderService
         $action = match ($session['step'] ?? '') {
             'await_form' => 'lengkapi & kirim form pesanannya',
             'await_destination' => 'ketik *kelurahan/desa, kecamatan, kota* tujuan',
+            'await_courier' => 'balas *nomor* kurir dari daftar yang dikirim',
             default => 'balas pesan terakhir untuk melanjutkan',
         };
 
@@ -120,6 +121,7 @@ class WaOrderService
             'await_form' => $this->handleForm($phone, $session, $text),
             'await_destination' => $this->handleDestination($phone, $session, $text),
             'await_confirm' => $this->handleConfirm($phone, $session, $text),
+            'await_courier' => $this->handleCourier($phone, $session, $text),
             default => $this->start($phone),
         };
     }
@@ -417,6 +419,7 @@ class WaOrderService
             ."⚠️ *Pastikan TUJUAN di atas sudah benar* — ini yang menentukan ongkir & area pengiriman.\n\n"
             ."• Balas *YA* untuk konfirmasi (Transfer/QRIS).\n"
             ."{$codLine}"
+            ."• Mau ganti kurir (mis. J&T/SAP selain {$shipping['code']})? Ketik *ganti kurir*.\n"
             ."• Tujuan belum pas? Ketik *ganti wilayah* untuk pilih ulang.\n"
             ."• Atau perbaiki alamat lalu *kirim ulang form* (ongkir dihitung ulang otomatis).\n"
             ."• Ketik *batal* untuk membatalkan.";
@@ -439,6 +442,12 @@ class WaOrderService
             $this->put($phone, $session);
 
             return "Baik 👍 Ketik *kelurahan/desa, kecamatan, kota* tujuan yang benar.\nContoh: *Pagentan, Singosari, Malang*";
+        }
+
+        // Ganti kurir kalau opsi termurah yang otomatis kepilih kurang pas
+        // (mis. customer mau J&T/SAP walau lebih mahal dari Lion cargo).
+        if (in_array($lower, ['ganti kurir', 'ubah kurir', 'pilih kurir', 'ganti ekspedisi', 'ubah ekspedisi', 'kurir'], true)) {
+            return $this->offerCourierChoices($phone, $session);
         }
 
         $isCod = in_array($lower, ['cod', 'bayar ditempat', 'bayar di tempat'], true);
@@ -522,6 +531,58 @@ class WaOrderService
 
         // QRIS nonaktif/gagal → transfer manual (info rekening).
         return $this->orderConfirmation($order, $session);
+    }
+
+    /**
+     * Ambil ulang daftar opsi ongkir (bukan cuma yang termurah) & tampilkan
+     * bernomor supaya customer bisa pilih kurir lain selain hasil auto-pilih
+     * (mis. paket berat otomatis kepilih Lion cargo, tapi customer mau J&T).
+     */
+    protected function offerCourierChoices(string $phone, array $session): string
+    {
+        $itemsValue = (int) collect($session['items'])->sum(fn (array $i): int => (int) $i['price'] * (int) $i['qty']);
+        $options = $this->shippingOptions($session['destination']['id'], $this->totalWeight($session['items']), $itemsValue);
+
+        if ($options === []) {
+            return $this->buildConfirmation($session);
+        }
+
+        $session['courier_options'] = $options;
+        $session['step'] = 'await_courier';
+        $this->put($phone, $session);
+
+        $list = collect($options)
+            ->map(function (array $o, int $i): string {
+                $est = ($o['estimate'] ?? '') !== '' ? ', estimasi '.$o['estimate'] : '';
+
+                return '*'.($i + 1).'*. '.$o['service'].' — '.$o['price'].$est;
+            })
+            ->implode("\n");
+
+        return "🚚 Pilih kurir (balas *nomor*):\n\n{$list}\n\nKetik *batal* untuk membatalkan pesanan.";
+    }
+
+    protected function handleCourier(string $phone, array $session, string $text): string
+    {
+        $trimmed = trim($text);
+
+        if (preg_match('/^\d{1,2}$/', $trimmed) === 1 && ! empty($session['courier_options'])) {
+            $opts = $session['courier_options'];
+            $idx = (int) $trimmed - 1;
+
+            if (! isset($opts[$idx])) {
+                return "Nomor tidak valid. Balas angka *1*–".count($opts)." sesuai daftar di atas.";
+            }
+
+            $session['shipping'] = $opts[$idx];
+            unset($session['courier_options']);
+            $session['step'] = 'await_confirm';
+            $this->put($phone, $session);
+
+            return $this->buildConfirmation($session);
+        }
+
+        return "Balas dengan *angka* sesuai daftar kurir di atas, atau ketik *batal* untuk membatalkan.";
     }
 
     /* ----------------------------------------------------------------- */
