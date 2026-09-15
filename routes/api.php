@@ -91,6 +91,7 @@ Route::prefix('v1')->middleware('throttle:api')->group(function (): void {
         Route::get('/reports/shipping', [AdminReportController::class, 'shipping']);
         Route::get('/reports/stock', [AdminReportController::class, 'stock']);
         Route::get('/reports/customers', [AdminReportController::class, 'customers']);
+        Route::get('/reports/whatsapp', [AdminReportController::class, 'whatsapp']);
         Route::get('/rajaongkir-balance', [AdminRajaOngkirBalanceController::class, 'index']);
         Route::post('/rajaongkir-balance/topups', [AdminRajaOngkirBalanceController::class, 'storeTopup']);
         Route::delete('/rajaongkir-balance/topups/{topup}', [AdminRajaOngkirBalanceController::class, 'destroyTopup']);

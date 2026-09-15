@@ -7,6 +7,7 @@ use App\Models\Order;
 use App\Models\PaymentAccount;
 use App\Models\Product;
 use App\Models\User;
+use App\Models\WaMessage;
 use App\Support\Contracts\WhatsappGateway;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -152,9 +153,7 @@ class WaOrderService
         // tidak ada teks setelahnya, supaya kalau pelanggan meng-copas seluruh
         // pesan tidak ada baris contoh/instruksi yang ikut ter-parse jadi item
         // (parseForm membaca SEMUA teks setelah "Pesanan:").
-        $this->wablas->sendMessage(
-            $phone,
-            "📝 *Form Pesanan Sobat Akar Tani Kimia*\n\n"
+        $formMessage = "📝 *Form Pesanan Sobat Akar Tani Kimia*\n\n"
             ."Salin pesan ini, isi, lalu kirim:\n\n"
             ."Nama: \n"
             ."No HP: \n"
@@ -163,22 +162,22 @@ class WaOrderService
             ."Kecamatan: \n"
             ."Kota/Kabupaten: \n"
             ."Pesanan:\n"
-            ."- "
-        );
+            ."- ";
+        $this->wablas->sendMessage($phone, $formMessage);
+        $this->log($phone, $formMessage);
 
         // Pesan 2: INSTRUKSI terpisah. Tanpa header "Pesanan:" dan tanpa baris
         // diawali "-", jadi aman walau ikut di-copas (tak jadi item hantu).
-        $this->wablas->sendMessage(
-            $phone,
-            "ℹ️ *Cara mengisi:*\n\n"
+        $instructionMessage = "ℹ️ *Cara mengisi:*\n\n"
             ."Alamat cukup nama jalan, nomor rumah, & RT/RW. Kelurahan/Desa,\n"
             ."Kecamatan, Kota/Kabupaten diisi terpisah supaya ongkir & tujuan kirim akurat.\n\n"
             ."Tulis tiap produk + jumlahnya. Contoh:\n"
             ."Pupuk NPK 5 kg x2\n"
             ."Pestisida Organik 1 liter\n\n"
             ."• Lihat daftar produk → ketik */katalog*\n"
-            ."• Batalkan → ketik *batal*"
-        );
+            ."• Batalkan → ketik *batal*";
+        $this->wablas->sendMessage($phone, $instructionMessage);
+        $this->log($phone, $instructionMessage);
 
         // Balasan sudah dikirim langsung (2 pesan); kembalikan kosong supaya
         // WaBotService tidak mengirim pesan ketiga.
@@ -518,11 +517,15 @@ class WaOrderService
                     // gateway. Penting: di Wablas, sendImage bisa GAGAL dan ikut menelan
                     // caption-nya (link hilang); pesan teks biasa selalu sampai. Di Fonnte
                     // FREE gambar di-drop tapi teks tetap sampai. Jadi link aman di teks.
-                    $this->wablas->sendMessage($phone, $this->orderConfirmationQris($order, (int) $res['final_amount'], $transferOn, $imageUrl));
+                    $qrisConfirmation = $this->orderConfirmationQris($order, (int) $res['final_amount'], $transferOn, $imageUrl);
+                    $this->wablas->sendMessage($phone, $qrisConfirmation);
+                    $this->log($phone, $qrisConfirmation);
 
                     // Bonus: kirim gambar QR (muncul inline di gateway yang mendukung).
                     // Kalau gagal/di-drop, link sudah ada di pesan teks di atas.
-                    $this->wablas->sendImage($phone, $imageUrl, '📷 Scan QR untuk bayar *'.$amountText.'*.');
+                    $qrisImageCaption = '📷 Scan QR untuk bayar *'.$amountText.'*.';
+                    $this->wablas->sendImage($phone, $imageUrl, $qrisImageCaption);
+                    $this->log($phone, $qrisImageCaption);
 
                     return '';
                 }
@@ -1075,5 +1078,21 @@ class WaOrderService
     protected function forget(string $phone): void
     {
         Cache::forget($this->key($phone));
+    }
+
+    /**
+     * Catat pesan keluar yang dikirim LANGSUNG dari sini (bukan lewat return
+     * string ke WaBotService::handle(), yang punya pencatatan sendiri) — tanpa
+     * ini, transkrip form order & konfirmasi QRIS tidak pernah masuk
+     * wa_messages, sehingga under-count di laporan penggunaan WA & order QRIS
+     * via WA tidak kedeteksi (kode order tidak pernah tersimpan di mana pun).
+     */
+    protected function log(string $phone, string $message): void
+    {
+        try {
+            WaMessage::create(['phone' => $phone, 'direction' => 'out', 'message' => $message]);
+        } catch (\Throwable) {
+            // Jangan ganggu pengiriman pesan kalau pencatatan gagal.
+        }
     }
 }

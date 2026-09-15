@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Order;
 use App\Models\User;
+use App\Models\WaMessage;
 use App\Support\ApiData;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -330,6 +331,86 @@ class AdminReportController extends Controller
                 'customer_count' => $rows->count(),
                 'repeat_count' => collect($data)->where('is_repeat', true)->count(),
                 'new_count' => collect($data)->where('is_repeat', false)->count(),
+            ],
+        ]);
+    }
+
+    /**
+     * Laporan penggunaan WhatsApp. Nomor WA bisnis juga dipakai pribadi, jadi
+     * pesan MASUK pasti campur chat bisnis & pribadi - "business_messages_in_estimate"
+     * adalah ESTIMASI (pesan masuk yang dapat balasan bot dalam 5 menit,
+     * mengikuti perilaku bot sesungguhnya - lihat WaBotService::handle()),
+     * BUKAN angka pasti. Pesan KELUAR aman dihitung utuh (cuma balasan bot,
+     * chat pribadi manual dari HP itu tidak pernah lewat sistem ini).
+     *
+     * Order dari WhatsApp dideteksi dari kode order yang muncul di transkrip
+     * pesan keluar (WaOrderService selalu menyertakan kode order di konfirmasi)
+     * - bukan kolom channel terpisah, jadi order lama (sebelum WaOrderService
+     * mencatat semua jenis balasannya) bisa under-detect.
+     */
+    public function whatsapp(Request $request): JsonResponse
+    {
+        $anchor = $this->resolveMonth($request);
+        $start = $anchor->copy()->startOfMonth();
+        $end = $anchor->copy()->endOfMonth();
+        $revenueDate = 'COALESCE(paid_at, created_at)';
+
+        $messagesIn = WaMessage::query()
+            ->where('direction', 'in')
+            ->whereBetween('created_at', [$start, $end])
+            ->count();
+
+        $messagesOut = WaMessage::query()
+            ->where('direction', 'out')
+            ->whereBetween('created_at', [$start, $end])
+            ->count();
+
+        $businessMessagesInEstimate = WaMessage::query()
+            ->from('wa_messages as m')
+            ->where('m.direction', 'in')
+            ->whereBetween('m.created_at', [$start, $end])
+            ->whereExists(function ($query): void {
+                $query->select(DB::raw(1))
+                    ->from('wa_messages as o')
+                    ->whereColumn('o.phone', 'm.phone')
+                    ->where('o.direction', 'out')
+                    ->whereRaw('o.created_at BETWEEN m.created_at AND DATE_ADD(m.created_at, INTERVAL 5 MINUTE)');
+            })
+            ->count();
+
+        $orders = Order::query()
+            ->whereIn('status', self::PAID_STATUSES)
+            ->whereRaw("$revenueDate BETWEEN ? AND ?", [$start, $end])
+            ->get(['id', 'code', 'grand_total']);
+
+        $whatsappOrders = $orders->filter(fn (Order $order): bool => WaMessage::query()
+            ->where('direction', 'out')
+            ->where('message', 'like', '%'.$order->code.'%')
+            ->exists());
+
+        $whatsappOrderCount = $whatsappOrders->count();
+        $whatsappRevenue = (int) $whatsappOrders->sum('grand_total');
+        $totalOrderCount = $orders->count();
+        $totalRevenue = (int) $orders->sum('grand_total');
+
+        return response()->json([
+            'data' => [
+                'messages_in' => $messagesIn,
+                'messages_out' => $messagesOut,
+                'business_messages_in_estimate' => $businessMessagesInEstimate,
+                'whatsapp_order_count' => $whatsappOrderCount,
+                'whatsapp_revenue' => ApiData::rupiah($whatsappRevenue),
+                'whatsapp_revenue_value' => $whatsappRevenue,
+                'web_order_count' => $totalOrderCount - $whatsappOrderCount,
+                'web_revenue' => ApiData::rupiah($totalRevenue - $whatsappRevenue),
+                'web_revenue_value' => $totalRevenue - $whatsappRevenue,
+            ],
+            'meta' => [
+                'month' => $anchor->format('Y-m'),
+                'month_label' => $anchor->translatedFormat('F Y'),
+                'total_order_count' => $totalOrderCount,
+                'total_revenue' => ApiData::rupiah($totalRevenue),
+                'total_revenue_value' => $totalRevenue,
             ],
         ]);
     }
