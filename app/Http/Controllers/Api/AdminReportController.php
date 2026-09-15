@@ -343,10 +343,12 @@ class AdminReportController extends Controller
      * BUKAN angka pasti. Pesan KELUAR aman dihitung utuh (cuma balasan bot,
      * chat pribadi manual dari HP itu tidak pernah lewat sistem ini).
      *
-     * Order dari WhatsApp dideteksi dari kode order yang muncul di transkrip
-     * pesan keluar (WaOrderService selalu menyertakan kode order di konfirmasi)
-     * - bukan kolom channel terpisah, jadi order lama (sebelum WaOrderService
-     * mencatat semua jenis balasannya) bisa under-detect.
+     * Order dari WhatsApp dideteksi dari kolom `channel` (diisi otomatis saat
+     * order dibuat - lihat WaOrderService::createOrder() & Api\OrderController::store()).
+     * Order LAMA (sebelum kolom ini ada, `channel` masih null) fallback ke cara
+     * lama: cari kode order di transkrip pesan keluar WA (WaOrderService selalu
+     * menyertakan kode order di pesan konfirmasi) - bisa under-detect utk order
+     * yang pesan konfirmasinya kebetulan termasuk yang dulu belum tercatat.
      */
     public function whatsapp(Request $request): JsonResponse
     {
@@ -381,12 +383,20 @@ class AdminReportController extends Controller
         $orders = Order::query()
             ->whereIn('status', self::PAID_STATUSES)
             ->whereRaw("$revenueDate BETWEEN ? AND ?", [$start, $end])
-            ->get(['id', 'code', 'grand_total']);
+            ->get(['id', 'code', 'channel', 'grand_total']);
 
-        $whatsappOrders = $orders->filter(fn (Order $order): bool => WaMessage::query()
-            ->where('direction', 'out')
-            ->where('message', 'like', '%'.$order->code.'%')
-            ->exists());
+        $whatsappOrders = $orders->filter(function (Order $order): bool {
+            if ($order->channel !== null) {
+                return $order->channel === 'whatsapp';
+            }
+
+            // Order lama (sebelum kolom channel ada) - fallback ke deteksi
+            // kode order di transkrip pesan keluar WA.
+            return WaMessage::query()
+                ->where('direction', 'out')
+                ->where('message', 'like', '%'.$order->code.'%')
+                ->exists();
+        });
 
         $whatsappOrderCount = $whatsappOrders->count();
         $whatsappRevenue = (int) $whatsappOrders->sum('grand_total');

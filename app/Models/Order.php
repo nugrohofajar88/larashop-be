@@ -23,6 +23,7 @@ class Order extends Model
         'user_id',
         'customer_address_id',
         'status',
+        'channel',
         'payment_method',
         'payment_status',
         'items_total',

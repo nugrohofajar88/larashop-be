@@ -201,6 +201,7 @@ class OrderController extends Controller
                 'user_id' => $user->id,
                 'customer_address_id' => $address->id,
                 'status' => 'pending_payment',
+                'channel' => 'web',
                 'payment_method' => $paymentMethod,
                 'payment_status' => $paymentStatus,
                 'items_total' => $itemsTotal,

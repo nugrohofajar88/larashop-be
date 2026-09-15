@@ -843,6 +843,7 @@ class WaOrderService
                 'user_id' => $user->id,
                 'customer_address_id' => $address->id,
                 'status' => 'pending_payment',
+                'channel' => 'whatsapp',
                 'payment_method' => $paymentMethod,
                 'payment_status' => $paymentStatus,
                 'items_total' => $itemsTotal,
