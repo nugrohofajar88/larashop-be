@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Order;
 use App\Models\QrisGenerationLog;
 use App\Models\RajaOngkirTopup;
+use App\Models\RajaOngkirWithdrawal;
 use App\Support\ApiData;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -90,7 +91,13 @@ class AdminRajaOngkirBalanceController extends Controller
             ->get(['code', 'awb', 'komerce_order_no', 'recipient_name', 'shipping_retry_fee', 'shipping_retry_count', 'created_at']);
         $totalRetryFee = (int) $retryFeeOrders->sum('shipping_retry_fee');
 
-        $estimatedBalance = $totalTopup - $totalOngkir - $totalQrisFee + $totalCodRemitted - $totalRetryFee;
+        // Penarikan dana dari saldo deposit ke rekening bank (jenis "Withdrawal" di
+        // file mutasi) - disinkronkan bareng biaya QRIS via syncQris(). Beneran
+        // ngurangin saldo deposit, sama seperti ongkir/biaya QRIS/retry fee.
+        $withdrawalCount = RajaOngkirWithdrawal::query()->count();
+        $totalWithdrawal = (int) RajaOngkirWithdrawal::query()->sum('amount');
+
+        $estimatedBalance = $totalTopup - $totalOngkir - $totalQrisFee + $totalCodRemitted - $totalRetryFee - $totalWithdrawal;
 
         return response()->json([
             'data' => [
@@ -144,6 +151,9 @@ class AdminRajaOngkirBalanceController extends Controller
                 'total_retry_fee' => ApiData::rupiah($totalRetryFee),
                 'total_retry_fee_value' => $totalRetryFee,
                 'retry_fee_count' => $retryFeeOrders->count(),
+                'total_withdrawal' => ApiData::rupiah($totalWithdrawal),
+                'total_withdrawal_value' => $totalWithdrawal,
+                'withdrawal_count' => $withdrawalCount,
                 'estimated_balance' => ApiData::rupiah($estimatedBalance),
                 'estimated_balance_value' => $estimatedBalance,
                 'flagged_discrepancies_count' => $flaggedDiscrepancies->count(),
@@ -177,11 +187,12 @@ class AdminRajaOngkirBalanceController extends Controller
     }
 
     /**
-     * Sinkronisasi total biaya generate QRIS dari file mutasi RajaOngkir/Komerce
-     * (CSV, kolom: Tanggal, Jenis Transaksi, Resi, Mutasi, Debit/Credit, Saldo,
-     * Detail - hasil export dashboard mereka). Cuma proses baris "generate_qris".
-     * Dedup berdasarkan timestamp persis (created_at) supaya upload ulang file yang
-     * rentang tanggalnya overlap tidak dobel-catat.
+     * Sinkronisasi total biaya generate QRIS + penarikan dana (Withdrawal) dari
+     * file mutasi RajaOngkir/Komerce (CSV, kolom: Tanggal, Jenis Transaksi, Resi,
+     * Mutasi, Debit/Credit, Saldo, Detail - hasil export dashboard mereka). 1 file
+     * upload memproses KEDUA jenis baris sekaligus ("generate_qris" & "Withdrawal").
+     * Dedup masing-masing berdasarkan timestamp persis supaya upload ulang file
+     * yang rentang tanggalnya overlap tidak dobel-catat.
      */
     public function syncQris(Request $request): JsonResponse
     {
@@ -211,46 +222,84 @@ class AdminRajaOngkirBalanceController extends Controller
             return response()->json(['message' => 'Kolom "Tanggal", "Jenis Transaksi", atau "Mutasi" tidak ditemukan di file.'], 422);
         }
 
-        $existingTimestamps = QrisGenerationLog::query()->pluck('created_at')
+        $existingQrisTimestamps = QrisGenerationLog::query()->pluck('created_at')
+            ->map(fn ($t) => $t->format('Y-m-d H:i:s'))
+            ->flip();
+        $existingWithdrawalTimestamps = RajaOngkirWithdrawal::query()->pluck('withdrawn_at')
             ->map(fn ($t) => $t->format('Y-m-d H:i:s'))
             ->flip();
 
         $added = 0;
         $skipped = 0;
         $addedFee = 0;
+        $withdrawalAdded = 0;
+        $withdrawalSkipped = 0;
+        $withdrawalTotal = 0;
 
         while (($row = fgetcsv($handle)) !== false) {
-            if (($row[$jenisIdx] ?? null) !== 'generate_qris') {
+            $jenis = $row[$jenisIdx] ?? null;
+
+            if ($jenis === 'generate_qris') {
+                $timestamp = \Carbon\Carbon::parse($row[$tanggalIdx], 'Asia/Jakarta');
+                $key = $timestamp->format('Y-m-d H:i:s');
+
+                if (isset($existingQrisTimestamps[$key])) {
+                    $skipped++;
+
+                    continue;
+                }
+
+                $fee = (int) $row[$mutasiIdx];
+
+                $log = new QrisGenerationLog();
+                $log->fee = $fee;
+                $log->created_at = $timestamp;
+                $log->updated_at = $timestamp;
+                $log->save();
+
+                $existingQrisTimestamps[$key] = true;
+                $added++;
+                $addedFee += $fee;
+
                 continue;
             }
 
-            $timestamp = \Carbon\Carbon::parse($row[$tanggalIdx], 'Asia/Jakarta');
-            $key = $timestamp->format('Y-m-d H:i:s');
+            if ($jenis === 'Withdrawal') {
+                $timestamp = \Carbon\Carbon::parse($row[$tanggalIdx], 'Asia/Jakarta');
+                $key = $timestamp->format('Y-m-d H:i:s');
 
-            if (isset($existingTimestamps[$key])) {
-                $skipped++;
+                if (isset($existingWithdrawalTimestamps[$key])) {
+                    $withdrawalSkipped++;
 
-                continue;
+                    continue;
+                }
+
+                $amount = (int) $row[$mutasiIdx];
+
+                RajaOngkirWithdrawal::query()->create([
+                    'amount' => $amount,
+                    'withdrawn_at' => $timestamp,
+                ]);
+
+                $existingWithdrawalTimestamps[$key] = true;
+                $withdrawalAdded++;
+                $withdrawalTotal += $amount;
             }
-
-            $fee = (int) $row[$mutasiIdx];
-
-            $log = new QrisGenerationLog();
-            $log->fee = $fee;
-            $log->created_at = $timestamp;
-            $log->updated_at = $timestamp;
-            $log->save();
-
-            $existingTimestamps[$key] = true;
-            $added++;
-            $addedFee += $fee;
         }
 
         fclose($handle);
 
         return response()->json([
-            'message' => "Sinkronisasi selesai: {$added} baris baru ditambahkan (Rp".number_format($addedFee, 0, ',', '.').'), '."{$skipped} baris dilewati karena sudah tercatat.",
-            'meta' => ['added' => $added, 'skipped' => $skipped, 'added_fee_value' => $addedFee],
+            'message' => "Sinkronisasi selesai: {$added} baris QRIS baru (Rp".number_format($addedFee, 0, ',', '.').", {$skipped} dilewati), "
+                ."{$withdrawalAdded} baris Withdrawal baru (Rp".number_format($withdrawalTotal, 0, ',', '.').", {$withdrawalSkipped} dilewati).",
+            'meta' => [
+                'added' => $added,
+                'skipped' => $skipped,
+                'added_fee_value' => $addedFee,
+                'withdrawal_added' => $withdrawalAdded,
+                'withdrawal_skipped' => $withdrawalSkipped,
+                'withdrawal_added_value' => $withdrawalTotal,
+            ],
         ]);
     }
 }
