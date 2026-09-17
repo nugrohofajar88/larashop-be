@@ -189,6 +189,60 @@ class ShippingService
     }
 
     /**
+     * Sinkronkan status order dgn kondisi live di kurir (via trackWaybill) - dipakai
+     * sebagai jalur VERIFIKASI, pelengkap webhook Komerce yang kadang tidak konsisten
+     * masuk utk kurir tertentu (mis. Lion Parcel). Aman dipanggil berkali-kali.
+     *
+     * @return array{changed:bool,new_status:?string,reason:string}
+     */
+    public function syncOrderStatus(\App\Models\Order $order, string $source): array
+    {
+        if (! in_array($order->status, ['processing', 'shipped'], true)) {
+            return ['changed' => false, 'new_status' => null, 'reason' => 'Status order bukan processing/shipped, tidak perlu sync.'];
+        }
+
+        $awb = trim((string) $order->awb);
+        if ($awb === '') {
+            return ['changed' => false, 'new_status' => null, 'reason' => 'Order belum punya AWB.'];
+        }
+
+        $courier = self::courierCode($order->shipping_service_name);
+        $lastPhone = substr(preg_replace('/\D/', '', (string) $order->recipient_phone), -5);
+
+        $result = $this->trackWaybill($awb, $courier, $lastPhone !== '' ? $lastPhone : null);
+
+        if (! $result['ok']) {
+            return ['changed' => false, 'new_status' => null, 'reason' => 'Gagal melacak resi: '.$result['message']];
+        }
+
+        $data = (array) ($result['data'] ?? []);
+        $delivered = (bool) ($data['delivered'] ?? false);
+
+        if ($delivered) {
+            $order->update([
+                'status' => 'completed',
+                'shipment_note' => 'Order ditandai selesai otomatis berdasarkan tracking resi (sudah diterima).',
+            ]);
+            $order->logTracking('delivered', $source, ['awb' => $awb]);
+
+            return ['changed' => true, 'new_status' => 'completed', 'reason' => 'Resi menunjukkan sudah diterima customer.'];
+        }
+
+        if ($order->status === 'processing') {
+            $order->update([
+                'status' => 'shipped',
+                'shipment_note' => 'Paket dalam pengiriman (dikonfirmasi via tracking resi).'.($awb ? ' AWB: '.$awb : ''),
+                'shipped_at' => $order->shipped_at ?? now(),
+            ]);
+            $order->logTracking('in_transit', $source, ['awb' => $awb]);
+
+            return ['changed' => true, 'new_status' => 'shipped', 'reason' => 'Resi menunjukkan paket sudah dalam pengiriman.'];
+        }
+
+        return ['changed' => false, 'new_status' => null, 'reason' => 'Masih dalam pengiriman, belum diterima.'];
+    }
+
+    /**
      * Petakan nama layanan kirim (mis. "JNT - EZ", "IDEXPRESS - IDFLAT") ke kode
      * kurir RajaOngkir (jnt, ide, dst). Diperlukan karena nama di Collaborator
      * (IDEXPRESS) beda dgn kode tracking RajaOngkir (ide).

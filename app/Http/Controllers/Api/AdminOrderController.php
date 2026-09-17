@@ -814,11 +814,32 @@ class AdminOrderController extends Controller
             'shipment_note' => 'Order ditandai selesai oleh admin setelah barang dipastikan diterima customer.',
         ]);
 
+        $order->logTracking('delivered', 'admin');
+
         $order->refresh()->load(['items', 'user']);
 
         return response()->json([
             'data' => ApiData::order($order),
             'message' => 'Order berhasil ditandai selesai.',
+        ]);
+    }
+
+    /**
+     * Verifikasi status order via tracking resi langsung ke RajaOngkir (bukan
+     * webhook Komerce) - dipakai kalau webhook kurir tertentu (mis. Lion Parcel)
+     * tidak konsisten masuk sehingga status order nyangkut di belakang kondisi
+     * riilnya. Lihat App\Support\ShippingService::syncOrderStatus().
+     */
+    public function syncTracking(Order $order): JsonResponse
+    {
+        $result = app(\App\Support\ShippingService::class)->syncOrderStatus($order, 'admin');
+
+        $order->refresh()->load(['items', 'user']);
+
+        return response()->json([
+            'data' => $this->orderWithAdminExtras($order),
+            'message' => $result['reason'],
+            'changed' => $result['changed'],
         ]);
     }
 }

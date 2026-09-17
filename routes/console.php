@@ -20,3 +20,8 @@ Schedule::call(fn () => Artisan::call('orders:expire-unpaid'))->hourly();
 
 // Backup database harian ke Cloudflare R2 (off-site), simpan 14 hari terakhir.
 Schedule::call(fn () => Artisan::call('db:backup'))->dailyAt('02:00');
+
+// Auto-heal status order via tracking resi live - webhook Komerce utk kurir tertentu
+// (mis. Lion Parcel) kadang tidak konsisten masuk, jadi status order bisa nyangkut
+// padahal paket sudah lebih maju (bahkan sudah diterima) di dunia nyata.
+Schedule::call(fn () => Artisan::call('orders:sync-tracking'))->hourly();
