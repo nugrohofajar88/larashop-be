@@ -162,6 +162,7 @@ class AdminOrderController extends Controller
     {
         return ApiData::order($order) + [
             'cod_service_fee' => (int) $order->cod_service_fee,
+            'can_restore' => $order->isRestorable(),
             'is_printed' => $order->printed_at !== null,
             'printed_label' => $order->printed_at
                 ? 'Dicetak '.$order->printed_at->translatedFormat('d M Y, H:i').' oleh '.($order->printed_by ?: '-')
@@ -348,6 +349,18 @@ class AdminOrderController extends Controller
         return response()->json([
             'data' => ApiData::order($order),
             'message' => 'Order berhasil dibatalkan oleh admin.'.($komerceWarning ? ' (Catatan: '.$komerceWarning.')' : ''),
+        ]);
+    }
+
+    /** Pulihkan order yang batal otomatis karena telat bayar (pelanggan ternyata sudah transfer). */
+    public function restore(Order $order): JsonResponse
+    {
+        $order = app(\App\Support\OrderRestoreService::class)->restore($order, 'admin');
+        $order->load(['items', 'user']);
+
+        return response()->json([
+            'data' => $this->orderWithAdminExtras($order),
+            'message' => 'Order dipulihkan. Silakan validasi pembayaran kalau transfer sudah dicek.',
         ]);
     }
 

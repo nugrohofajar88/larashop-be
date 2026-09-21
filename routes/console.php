@@ -18,6 +18,9 @@ Artisan::command('inspire', function () {
 // command DALAM proses schedule:run yang sama, tidak butuh proc_open sama sekali.
 Schedule::call(fn () => Artisan::call('orders:expire-unpaid'))->hourly();
 
+// Pengingat WA utk order transfer manual yang belum dibayar (jam ke-6 & ke-20).
+Schedule::call(fn () => Artisan::call('orders:remind-unpaid'))->hourly();
+
 // Backup database harian ke Cloudflare R2 (off-site), simpan 14 hari terakhir.
 Schedule::call(fn () => Artisan::call('db:backup'))->dailyAt('02:00');
 

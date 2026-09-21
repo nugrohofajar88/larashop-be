@@ -136,6 +136,7 @@ Route::prefix('v1')->middleware('throttle:api')->group(function (): void {
         Route::get('/orders/{order}/label-diy', [AdminOrderController::class, 'printLabelDiy']);
         Route::post('/orders/{order}/complete', [AdminOrderController::class, 'complete']);
         Route::post('/orders/{order}/sync-tracking', [AdminOrderController::class, 'syncTracking']);
+        Route::post('/orders/{order}/restore', [AdminOrderController::class, 'restore']);
         Route::get('/qrisly', [AdminQrisController::class, 'index']);
         Route::post('/qrisly/upload', [AdminQrisController::class, 'upload']);
         Route::post('/qrisly/{qris}/activate', [AdminQrisController::class, 'activate']);

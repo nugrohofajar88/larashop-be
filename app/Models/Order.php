@@ -26,6 +26,7 @@ class Order extends Model
         'channel',
         'payment_method',
         'payment_status',
+        'payment_reminder_stage',
         'items_total',
         'shipping_total',
         'shipping_cashback',
@@ -52,6 +53,7 @@ class Order extends Model
         'qris_expired_at',
         'shipment_note',
         'paid_at',
+        'restored_at',
         'shipped_at',
         'printed_at',
         'printed_by',
@@ -80,10 +82,24 @@ class Order extends Model
             'qris_amount' => 'integer',
             'qris_expired_at' => 'datetime',
             'paid_at' => 'datetime',
+            'restored_at' => 'datetime',
             'shipped_at' => 'datetime',
             'printed_at' => 'datetime',
             'cancel_requested_at' => 'datetime',
         ];
+    }
+
+    /** Tenggat bayar dihitung dari saat order dipulihkan (kalau pernah), bukan created_at. */
+    public function paymentDeadline(): \Illuminate\Support\Carbon
+    {
+        return ($this->restored_at ?? $this->created_at)->copy()->addHours(self::PAYMENT_EXPIRE_HOURS);
+    }
+
+    /** Order yang dibatalkan otomatis karena telat bayar (bisa dipulihkan admin). */
+    public function isRestorable(): bool
+    {
+        return $this->status === 'cancelled'
+            && str_starts_with((string) $this->payment_status, 'Dibatalkan otomatis');
     }
 
     public function user(): BelongsTo

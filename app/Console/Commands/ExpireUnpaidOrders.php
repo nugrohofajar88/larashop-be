@@ -21,7 +21,7 @@ class ExpireUnpaidOrders extends Command
 
         $orders = Order::query()
             ->where('status', 'pending_payment')
-            ->where('created_at', '<', $cutoff)
+            ->whereRaw('COALESCE(restored_at, created_at) < ?', [$cutoff])
             ->get();
 
         $count = 0;

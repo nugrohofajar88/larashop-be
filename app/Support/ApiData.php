@@ -436,7 +436,7 @@ class ApiData
             // Order::PAYMENT_EXPIRE_HOURS / ExpireUnpaidOrders) - null kalau
             // sudah bukan pending_payment lagi (tidak relevan).
             'payment_deadline' => $order->status === 'pending_payment'
-                ? $order->created_at->copy()->addHours(Order::PAYMENT_EXPIRE_HOURS)->translatedFormat('d M Y, H:i')
+                ? $order->paymentDeadline()->translatedFormat('d M Y, H:i')
                 : null,
             'shipping_service' => $order->shipping_service_name,
             'shipping_estimate' => $order->shipping_estimate_days,
@@ -501,6 +501,7 @@ class ApiData
             'in_transit' => 'Dalam pengiriman',
             'delivered' => 'Sampai tujuan',
             'cancelled' => 'Dibatalkan',
+            'restored' => 'Order dipulihkan admin',
             default => ucfirst(str_replace('_', ' ', $status)),
         };
     }
