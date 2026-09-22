@@ -476,6 +476,12 @@ class WaOrderService
             $session['payment_method'] = 'COD';
         }
 
+        // Toko ditutup sementara (toggle admin, mis. hari libur) — jangan sampai
+        // order kebentuk sama sekali, walau customer sudah sampai tahap konfirmasi.
+        if (! \App\Models\Setting::storeOpen()) {
+            return "🙏 Maaf, toko sedang *tutup sementara* dan belum bisa menerima pesanan baru saat ini. Silakan coba lagi nanti ya.";
+        }
+
         try {
             $order = $this->createOrder($phone, $session);
         } catch (\Illuminate\Validation\ValidationException $e) {

@@ -21,7 +21,22 @@ class AdminSettingController extends Controller
                 'payment_transfer_enabled' => Setting::paymentTransferEnabled(),
                 'payment_qris_enabled' => Setting::paymentQrisEnabled(),
                 'payment_cod_enabled' => Setting::paymentCodEnabled(),
+                'store_open' => Setting::storeOpen(),
             ],
+        ]);
+    }
+
+    /** Toggle cepat terima-order-baru (dipakai tombol di sidebar admin, bukan form Pengaturan Toko). */
+    public function toggleStoreOpen(): JsonResponse
+    {
+        $newValue = ! Setting::storeOpen();
+        Setting::set('store_open', $newValue ? '1' : '0');
+
+        return response()->json([
+            'data' => ['store_open' => $newValue],
+            'message' => $newValue
+                ? 'Toko dibuka kembali. Customer bisa checkout seperti biasa.'
+                : 'Toko ditutup sementara. Customer tidak bisa checkout (web & WhatsApp) sampai dibuka lagi.',
         ]);
     }
 

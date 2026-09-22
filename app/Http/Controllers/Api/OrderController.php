@@ -70,6 +70,12 @@ class OrderController extends Controller
 
     public function store(Request $request): JsonResponse
     {
+        if (! Setting::storeOpen()) {
+            throw ValidationException::withMessages([
+                'cart' => 'Toko sedang tutup sementara, coba lagi nanti.',
+            ]);
+        }
+
         $validated = $request->validate([
             'address_id' => ['required', 'integer'],
             'shipping_option_id' => ['required', 'string', 'max:100'],

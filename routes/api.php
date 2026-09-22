@@ -159,5 +159,6 @@ Route::prefix('v1')->middleware('throttle:api')->group(function (): void {
 
         Route::get('/settings', [AdminSettingController::class, 'index']);
         Route::put('/settings', [AdminSettingController::class, 'update']);
+        Route::post('/settings/store-status/toggle', [AdminSettingController::class, 'toggleStoreOpen']);
     });
 });

@@ -50,4 +50,15 @@ class Setting extends Model
     {
         return (int) static::get('cod_max_amount', '5000000');
     }
+
+    /**
+     * Toko sedang terima order baru atau tidak (toggle admin, mis. hari libur).
+     * Default AKTIF kalau belum pernah di-set. Dicek di jalur checkout web
+     * (OrderController::store) & WA (WaOrderService::handleConfirm) - order
+     * baru sama sekali tidak dibuat selama ini mati.
+     */
+    public static function storeOpen(): bool
+    {
+        return filter_var(static::get('store_open', '1'), FILTER_VALIDATE_BOOLEAN);
+    }
 }
