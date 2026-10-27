@@ -71,7 +71,11 @@ class ShippingService
             'shipper_destination_id' => $origin->origin_id,
             'receiver_destination_id' => $destinationId,
             'weight' => round(max($weightGrams, 1) / 1000, 2), // KG (float) — API minta kilogram, bukan gram
-            'item_value' => max($itemValue, 0),
+            // Komerce sekarang WAJIB item_value > 0 (pernah boleh 0/kosong) - widget
+            // cek-ongkir publik & bot WA manggil costOptions() tanpa tau nilai barang
+            // (belum ada produk dipilih), jadi floor ke 1 di sini biar gak 422 kosong.
+            // item_value cuma pengaruh ke validasi/asuransi, bukan ke shipping_cost.
+            'item_value' => max($itemValue, 1),
             'cod' => 'yes',
             'origin_pin_point' => $origin->pin_point ?: null,
         ], fn ($v): bool => $v !== null));
