@@ -167,6 +167,14 @@ class AdminOrderController extends Controller
             'printed_label' => $order->printed_at
                 ? 'Dicetak '.$order->printed_at->translatedFormat('d M Y, H:i').' oleh '.($order->printed_by ?: '-')
                 : 'Belum dicetak',
+            // "Discan kurir" = sudah dikonfirmasi dipickup/dalam perjalanan - beda
+            // dari 'is_printed' (cuma label-nya yang sudah dicetak, paketnya bisa
+            // saja masih nunggu dijemput). Naik ke 'shipped' otomatis via tracking
+            // live (command orders:sync-tracking, tiap jam) atau ditandai manual.
+            'is_picked_up' => in_array($order->status, ['shipped', 'completed'], true),
+            'picked_up_label' => $order->shipped_at
+                ? 'Dipickup kurir '.$order->shipped_at->translatedFormat('d M Y, H:i')
+                : 'Belum dipickup kurir',
         ];
     }
 
