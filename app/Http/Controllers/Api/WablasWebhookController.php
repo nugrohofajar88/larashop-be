@@ -51,6 +51,22 @@ class WablasWebhookController extends Controller
      * request, jadi kita pakai shared secret via header atau query string.
      * Kalau WABLAS_WEBHOOK_SECRET kosong, request diterima (mode dev).
      */
+    /**
+     * Bersihkan teks pesan masuk dari byte UTF-8 tak valid (pernah bikin crash
+     * "Incorrect string value" waktu disimpan ke cache/DB - keyboard/autocorrect
+     * sebagian HP pelanggan kadang nyelipin byte rusak) dan karakter kontrol bidi
+     * tak kasat mata (mis. U+200E LEFT-TO-RIGHT MARK yang suka ikut kepaste kalau
+     * pelanggan copy pesan multi-baris dari WhatsApp - bikin parser form di
+     * WaOrderService gagal kenali batas antar baris/label).
+     */
+    protected function sanitizeText(string $text): string
+    {
+        $text = mb_convert_encoding($text, 'UTF-8', 'UTF-8');
+        $text = (string) preg_replace('/[\x{200B}-\x{200F}\x{202A}-\x{202E}\x{2066}-\x{2069}\x{FEFF}]/u', '', $text);
+
+        return trim($text);
+    }
+
     /** Normalisasi nomor ke digit dengan awalan 62 (mis. "0857.." -> "62857..."). */
     protected function normalizeNumber($raw): string
     {
@@ -126,7 +142,7 @@ class WablasWebhookController extends Controller
             }
         }
         $phone = $phone ?: ($candidates[0] ?? null);
-        $message = trim((string) ($payload['message'] ?? ''));
+        $message = $this->sanitizeText((string) ($payload['message'] ?? ''));
         $messageType = strtolower((string) ($payload['messageType'] ?? 'text'));
         $mediaUrl = trim((string) ($payload['url'] ?? $payload['image'] ?? $payload['file'] ?? $payload['media'] ?? ''));
 
