@@ -5,10 +5,13 @@ namespace App\Models;
 // use Illuminate\Contracts\Auth\MustVerifyEmail;
 use App\Models\CustomerAddress;
 use App\Models\Order;
+use App\Models\Reseller;
 use App\Models\UserUniqueCode;
 use Database\Factories\UserFactory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Sanctum\HasApiTokens;
@@ -26,6 +29,7 @@ class User extends Authenticatable
         'phone',
         'role',
         'admin_role',
+        'reseller_id',
         'status',
         'password',
     ];
@@ -83,5 +87,17 @@ class User extends Authenticatable
     public function isSuperAdmin(): bool
     {
         return $this->role === 'admin' && $this->admin_role === 'super_admin';
+    }
+
+    /** Reseller yang mereferensikan user ini (tautan permanen, lihat users.reseller_id). */
+    public function referrer(): BelongsTo
+    {
+        return $this->belongsTo(Reseller::class, 'reseller_id');
+    }
+
+    /** Profil reseller milik user ini sendiri (kalau user ini mendaftar jadi reseller). */
+    public function resellerProfile(): HasOne
+    {
+        return $this->hasOne(Reseller::class);
     }
 }

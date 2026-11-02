@@ -61,4 +61,30 @@ class Setting extends Model
     {
         return filter_var(static::get('store_open', '1'), FILTER_VALIDATE_BOOLEAN);
     }
+
+    /** Fitur reseller/afiliasi aktif (default MATI - perlu diaktifkan admin). */
+    public static function resellerEnabled(): bool
+    {
+        return filter_var(static::get('reseller_enabled', '0'), FILTER_VALIDATE_BOOLEAN);
+    }
+
+    /** Minimal saldo komisi yang boleh dicairkan reseller sekali ajuan. Default Rp50.000. */
+    public static function resellerMinWithdraw(): int
+    {
+        return (int) static::get('reseller_min_withdraw', '50000');
+    }
+
+    /** Jenis komisi default untuk reseller baru yang disetujui ('percentage'/'fixed'). */
+    public static function resellerDefaultCommissionType(): string
+    {
+        $type = static::get('reseller_default_commission_type', 'percentage');
+
+        return in_array($type, ['percentage', 'fixed'], true) ? $type : 'percentage';
+    }
+
+    /** Nilai komisi default: persen (mis. 5 = 5%) atau rupiah tetap, sesuai jenisnya. */
+    public static function resellerDefaultCommissionValue(): int
+    {
+        return (int) static::get('reseller_default_commission_value', '5');
+    }
 }

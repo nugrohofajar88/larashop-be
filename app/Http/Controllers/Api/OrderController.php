@@ -250,6 +250,8 @@ class OrderController extends Controller
 
             $order->logTracking('created', 'app');
 
+            app(\App\Support\ResellerCommissionService::class)->createPendingForOrder($order);
+
             if ($usedUniqueCode > 0) {
                 UserUniqueCode::query()->create([
                     'user_id' => $user->id,
@@ -370,6 +372,8 @@ class OrderController extends Controller
             'status' => 'completed',
             'shipment_note' => 'Pesanan diterima customer dan order dinyatakan selesai.',
         ]);
+
+        app(\App\Support\ResellerCommissionService::class)->confirmForOrder($order);
 
         $order->refresh()->load(['items', 'user']);
 

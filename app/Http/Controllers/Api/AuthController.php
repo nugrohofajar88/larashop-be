@@ -64,6 +64,7 @@ class AuthController extends Controller
             'phone' => ['required', 'string', 'max:20', 'unique:users,phone'],
             'email' => ['nullable', 'email', 'max:255', 'unique:users,email'],
             'password' => ['required', 'confirmed', Password::min(8)->letters()->numbers()],
+            'referral_code' => ['nullable', 'string', 'max:30'],
         ]);
 
         $customerNumber = str_pad((string) ((User::query()->where('role', 'customer')->count()) + 1), 3, '0', STR_PAD_LEFT);
@@ -78,6 +79,12 @@ class AuthController extends Controller
             'status' => 'active',
             'password' => $validated['password'],
         ]);
+
+        // Registrasi lewat link referral reseller - tautkan sekarang (sekali, permanen).
+        // Gagal (kode invalid/kedaluwarsa) sengaja TIDAK menggagalkan registrasi.
+        if (! empty($validated['referral_code'])) {
+            app(\App\Support\ResellerService::class)->bindReferral($user, $validated['referral_code']);
+        }
 
         $token = $user->createToken('frontend-register', ['role:customer'])->plainTextToken;
 

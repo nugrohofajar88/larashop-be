@@ -45,6 +45,8 @@ class ExpireUnpaidOrders extends Command
                     'cancel_requested_at' => null,
                 ]);
 
+                app(\App\Support\ResellerCommissionService::class)->cancelForOrder($order);
+
                 $order->logTracking('cancelled', 'system', ['note' => 'Auto-expire pembayaran > '.$hours.' jam']);
             });
 

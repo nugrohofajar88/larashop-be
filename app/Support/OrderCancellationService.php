@@ -45,6 +45,8 @@ class OrderCancellationService
                     'shipment_note' => 'Order dibatalkan oleh customer sebelum pembayaran diverifikasi.',
                     'cancel_requested_at' => null,
                 ]);
+
+                app(ResellerCommissionService::class)->cancelForOrder($order);
             });
 
             app(OrderCancellationNotifier::class)->send($order->fresh(['user']));
@@ -66,6 +68,8 @@ class OrderCancellationService
                     'shipment_note' => 'Order COD dibatalkan oleh customer sebelum diproses admin.',
                     'cancel_requested_at' => null,
                 ]);
+
+                app(ResellerCommissionService::class)->cancelForOrder($order);
             });
 
             app(OrderCancellationNotifier::class)->send($order->fresh(['user']));

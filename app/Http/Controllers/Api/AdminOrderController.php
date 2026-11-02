@@ -346,6 +346,8 @@ class AdminOrderController extends Controller
                 'cancel_requested_at' => null,
                 'cancel_reason' => $reason !== '' ? $reason : null,
             ]);
+
+            app(\App\Support\ResellerCommissionService::class)->cancelForOrder($order);
         });
 
         $order->logTracking('cancelled', 'admin', $komerceWarning ? ['note' => $komerceWarning] : []);
@@ -834,6 +836,8 @@ class AdminOrderController extends Controller
             'status' => 'completed',
             'shipment_note' => 'Order ditandai selesai oleh admin setelah barang dipastikan diterima customer.',
         ]);
+
+        app(\App\Support\ResellerCommissionService::class)->confirmForOrder($order);
 
         $order->logTracking('delivered', 'admin');
 

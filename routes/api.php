@@ -12,6 +12,7 @@ use App\Http\Controllers\Api\AdminPushSubscriptionController;
 use App\Http\Controllers\Api\AdminProductController;
 use App\Http\Controllers\Api\AdminRajaOngkirBalanceController;
 use App\Http\Controllers\Api\AdminReportController;
+use App\Http\Controllers\Api\AdminResellerController;
 use App\Http\Controllers\Api\AdminSettingController;
 use App\Http\Controllers\Api\AdminShipmentController;
 use App\Http\Controllers\Api\AuthController;
@@ -20,6 +21,7 @@ use App\Http\Controllers\Api\CatalogController;
 use App\Http\Controllers\Api\CheckoutController;
 use App\Http\Controllers\Api\CustomerController;
 use App\Http\Controllers\Api\OrderController;
+use App\Http\Controllers\Api\ResellerController;
 use App\Http\Controllers\Api\ShippingController;
 use App\Http\Controllers\Api\StoreController;
 use App\Http\Controllers\Api\AdminQrisController;
@@ -79,6 +81,15 @@ Route::prefix('v1')->middleware('throttle:api')->group(function (): void {
         Route::post('/customer/orders/{code}/qris', [QrisController::class, 'generate']);
         Route::get('/customer/orders/{code}/qris/status', [QrisController::class, 'status']);
         Route::get('/checkout', [CheckoutController::class, 'show']);
+
+        if (config('features.reseller')) {
+            Route::post('/reseller/register', [ResellerController::class, 'register']);
+            Route::get('/reseller/me', [ResellerController::class, 'me']);
+            Route::post('/reseller/bind', [ResellerController::class, 'bind']);
+            Route::get('/reseller/commissions', [ResellerController::class, 'commissions']);
+            Route::get('/reseller/withdrawals', [ResellerController::class, 'withdrawals']);
+            Route::post('/reseller/withdrawals', [ResellerController::class, 'storeWithdrawal']);
+        }
     });
 
     Route::prefix('admin')->middleware(['auth:sanctum', 'role:admin'])->group(function (): void {
@@ -91,6 +102,9 @@ Route::prefix('v1')->middleware('throttle:api')->group(function (): void {
         Route::get('/reports/shipping', [AdminReportController::class, 'shipping']);
         Route::get('/reports/stock', [AdminReportController::class, 'stock']);
         Route::get('/reports/customers', [AdminReportController::class, 'customers']);
+        if (config('features.reseller')) {
+            Route::get('/reports/resellers', [AdminReportController::class, 'resellers']);
+        }
         Route::get('/reports/whatsapp', [AdminReportController::class, 'whatsapp']);
         Route::get('/rajaongkir-balance', [AdminRajaOngkirBalanceController::class, 'index']);
         Route::post('/rajaongkir-balance/topups', [AdminRajaOngkirBalanceController::class, 'storeTopup']);
@@ -160,5 +174,18 @@ Route::prefix('v1')->middleware('throttle:api')->group(function (): void {
         Route::get('/settings', [AdminSettingController::class, 'index']);
         Route::put('/settings', [AdminSettingController::class, 'update']);
         Route::post('/settings/store-status/toggle', [AdminSettingController::class, 'toggleStoreOpen']);
+
+        if (config('features.reseller')) {
+            Route::get('/resellers', [AdminResellerController::class, 'index']);
+            Route::get('/resellers/{reseller}', [AdminResellerController::class, 'show']);
+            Route::post('/resellers/{reseller}/approve', [AdminResellerController::class, 'approve']);
+            Route::post('/resellers/{reseller}/reject', [AdminResellerController::class, 'reject']);
+            Route::post('/resellers/{reseller}/suspend', [AdminResellerController::class, 'suspend']);
+            Route::post('/resellers/{reseller}/reactivate', [AdminResellerController::class, 'reactivate']);
+            Route::put('/resellers/{reseller}/commission', [AdminResellerController::class, 'updateCommission']);
+            Route::get('/reseller-withdrawals', [AdminResellerController::class, 'withdrawals']);
+            Route::post('/reseller-withdrawals/{withdrawal}/approve', [AdminResellerController::class, 'approveWithdrawal']);
+            Route::post('/reseller-withdrawals/{withdrawal}/reject', [AdminResellerController::class, 'rejectWithdrawal']);
+        }
     });
 });

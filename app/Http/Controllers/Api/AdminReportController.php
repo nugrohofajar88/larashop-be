@@ -4,6 +4,8 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Order;
+use App\Models\Reseller;
+use App\Models\ResellerCommission;
 use App\Models\User;
 use App\Models\WaMessage;
 use App\Support\ApiData;
@@ -331,6 +333,52 @@ class AdminReportController extends Controller
                 'customer_count' => $rows->count(),
                 'repeat_count' => collect($data)->where('is_repeat', true)->count(),
                 'new_count' => collect($data)->where('is_repeat', false)->count(),
+            ],
+        ]);
+    }
+
+    /** Laporan performa reseller - top reseller berdasarkan komisi dikonfirmasi pada bulan terpilih. */
+    public function resellers(Request $request): JsonResponse
+    {
+        $anchor = $this->resolveMonth($request);
+        $start = $anchor->copy()->startOfMonth();
+        $end = $anchor->copy()->endOfMonth();
+
+        $rows = ResellerCommission::query()
+            ->where('status', 'confirmed')
+            ->whereBetween('created_at', [$start, $end])
+            ->selectRaw('reseller_id, COUNT(*) as order_count, SUM(amount) as total_commission')
+            ->groupBy('reseller_id')
+            ->orderByDesc('total_commission')
+            ->limit(50)
+            ->get();
+
+        $resellerIds = $rows->pluck('reseller_id');
+        $resellers = Reseller::query()->whereIn('id', $resellerIds)->with('user')->get()->keyBy('id');
+        $referredCounts = User::query()
+            ->whereIn('reseller_id', $resellerIds)
+            ->selectRaw('reseller_id, COUNT(*) as c')
+            ->groupBy('reseller_id')
+            ->pluck('c', 'reseller_id');
+
+        $data = $rows->map(fn ($r): array => [
+            'reseller_id' => (int) $r->reseller_id,
+            'name' => $resellers->get($r->reseller_id)?->user?->name ?? 'Reseller #'.$r->reseller_id,
+            'referral_code' => $resellers->get($r->reseller_id)?->referral_code,
+            'order_count' => (int) $r->order_count,
+            'referred_count' => (int) ($referredCounts[$r->reseller_id] ?? 0),
+            'total_commission' => ApiData::rupiah((int) $r->total_commission),
+            'total_commission_value' => (int) $r->total_commission,
+        ])->values()->all();
+
+        return response()->json([
+            'data' => $data,
+            'meta' => [
+                'month' => $anchor->format('Y-m'),
+                'month_label' => $anchor->translatedFormat('F Y'),
+                'total_resellers_active' => Reseller::query()->where('status', 'active')->count(),
+                'total_commission_confirmed_value' => (int) $rows->sum('total_commission'),
+                'total_commission_confirmed' => ApiData::rupiah((int) $rows->sum('total_commission')),
             ],
         ]);
     }

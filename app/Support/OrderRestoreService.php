@@ -56,6 +56,8 @@ class OrderRestoreService
                 'shipment_note' => 'Order dipulihkan admin setelah sempat dibatalkan otomatis. Menunggu validasi pembayaran.',
             ]);
 
+            app(ResellerCommissionService::class)->resetForRestore($locked);
+
             $locked->logTracking('restored', $source);
         });
 

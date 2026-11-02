@@ -894,6 +894,8 @@ class WaOrderService
 
             $order->logTracking('created', 'app');
 
+            app(\App\Support\ResellerCommissionService::class)->createPendingForOrder($order);
+
             return $order->fresh('items');
         }), 50, fn ($e) => $e instanceof \Illuminate\Database\QueryException && str_contains($e->getMessage(), 'orders_code_unique'));
     }

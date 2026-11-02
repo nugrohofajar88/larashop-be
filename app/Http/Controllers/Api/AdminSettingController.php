@@ -11,19 +11,28 @@ class AdminSettingController extends Controller
 {
     public function index(): JsonResponse
     {
-        return response()->json([
-            'data' => [
-                'store_whatsapp' => Setting::get('store_whatsapp', ''),
-                'store_brand' => Setting::get('store_brand', ''),
-                'store_email' => Setting::get('store_email', ''),
-                'lion_commodity_code' => Setting::get('lion_commodity_code', 'BPI105'),
-                'unique_code_enabled' => Setting::uniqueCodeEnabled(),
-                'payment_transfer_enabled' => Setting::paymentTransferEnabled(),
-                'payment_qris_enabled' => Setting::paymentQrisEnabled(),
-                'payment_cod_enabled' => Setting::paymentCodEnabled(),
-                'store_open' => Setting::storeOpen(),
-            ],
-        ]);
+        $data = [
+            'store_whatsapp' => Setting::get('store_whatsapp', ''),
+            'store_brand' => Setting::get('store_brand', ''),
+            'store_email' => Setting::get('store_email', ''),
+            'lion_commodity_code' => Setting::get('lion_commodity_code', 'BPI105'),
+            'unique_code_enabled' => Setting::uniqueCodeEnabled(),
+            'payment_transfer_enabled' => Setting::paymentTransferEnabled(),
+            'payment_qris_enabled' => Setting::paymentQrisEnabled(),
+            'payment_cod_enabled' => Setting::paymentCodEnabled(),
+            'store_open' => Setting::storeOpen(),
+        ];
+
+        // Kill switch deploy (lihat config/features.php) - sembunyikan field
+        // pengaturan reseller sepenuhnya kalau fiturnya belum dinyalakan di .env.
+        if (config('features.reseller')) {
+            $data['reseller_enabled'] = Setting::resellerEnabled();
+            $data['reseller_min_withdraw'] = Setting::resellerMinWithdraw();
+            $data['reseller_default_commission_type'] = Setting::resellerDefaultCommissionType();
+            $data['reseller_default_commission_value'] = Setting::resellerDefaultCommissionValue();
+        }
+
+        return response()->json(['data' => $data]);
     }
 
     /** Toggle cepat terima-order-baru (dipakai tombol di sidebar admin, bukan form Pengaturan Toko). */
@@ -51,6 +60,10 @@ class AdminSettingController extends Controller
             'payment_transfer_enabled' => ['nullable', 'boolean'],
             'payment_qris_enabled' => ['nullable', 'boolean'],
             'payment_cod_enabled' => ['nullable', 'boolean'],
+            'reseller_enabled' => ['nullable', 'boolean'],
+            'reseller_min_withdraw' => ['nullable', 'integer', 'min:0'],
+            'reseller_default_commission_type' => ['nullable', 'in:percentage,fixed'],
+            'reseller_default_commission_value' => ['nullable', 'integer', 'min:0'],
         ]);
 
         Setting::set('store_whatsapp', $this->normalizeWa((string) ($validated['store_whatsapp'] ?? '')));
@@ -61,6 +74,13 @@ class AdminSettingController extends Controller
         Setting::set('payment_transfer_enabled', $request->boolean('payment_transfer_enabled') ? '1' : '0');
         Setting::set('payment_qris_enabled', $request->boolean('payment_qris_enabled') ? '1' : '0');
         Setting::set('payment_cod_enabled', $request->boolean('payment_cod_enabled') ? '1' : '0');
+
+        if (config('features.reseller')) {
+            Setting::set('reseller_enabled', $request->boolean('reseller_enabled') ? '1' : '0');
+            Setting::set('reseller_min_withdraw', (string) ($validated['reseller_min_withdraw'] ?? 50000));
+            Setting::set('reseller_default_commission_type', $validated['reseller_default_commission_type'] ?? 'percentage');
+            Setting::set('reseller_default_commission_value', (string) ($validated['reseller_default_commission_value'] ?? 5));
+        }
 
         return response()->json([
             'message' => 'Pengaturan toko berhasil disimpan.',

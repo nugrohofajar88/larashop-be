@@ -6,6 +6,9 @@ use App\Models\CustomerAddress;
 use App\Models\Order;
 use App\Models\Product;
 use App\Models\ProductVariant;
+use App\Models\Reseller;
+use App\Models\ResellerCommission;
+use App\Models\ResellerWithdrawal;
 use App\Models\ShipmentOrigin;
 use App\Models\ShippingService;
 use App\Models\User;
@@ -504,6 +507,100 @@ class ApiData
             'restored' => 'Order dipulihkan admin',
             default => ucfirst(str_replace('_', ' ', $status)),
         };
+    }
+
+    public static function resellerStatusLabel(string $status): string
+    {
+        return match ($status) {
+            'pending' => 'Menunggu persetujuan',
+            'active' => 'Aktif',
+            'rejected' => 'Ditolak',
+            'suspended' => 'Ditangguhkan',
+            default => 'Menunggu persetujuan',
+        };
+    }
+
+    public static function resellerCommissionStatusLabel(string $status): string
+    {
+        return match ($status) {
+            'pending' => 'Menunggu',
+            'confirmed' => 'Dikonfirmasi',
+            'cancelled' => 'Dibatalkan',
+            default => 'Menunggu',
+        };
+    }
+
+    public static function resellerWithdrawalStatusLabel(string $status): string
+    {
+        return match ($status) {
+            'pending' => 'Menunggu',
+            'approved' => 'Disetujui',
+            'rejected' => 'Ditolak',
+            default => 'Menunggu',
+        };
+    }
+
+    public static function reseller(Reseller $reseller): array
+    {
+        $balance = $reseller->balance();
+
+        return [
+            'id' => $reseller->id,
+            'referral_code' => $reseller->referral_code,
+            'commission_type' => $reseller->commission_type,
+            'commission_value' => $reseller->commission_value,
+            'commission_label' => $reseller->commission_type === 'fixed'
+                ? self::rupiah($reseller->commission_value).' / order'
+                : $reseller->commission_value.'%',
+            'status' => $reseller->status,
+            'status_label' => self::resellerStatusLabel($reseller->status),
+            'rejected_reason' => $reseller->rejected_reason,
+            'balance' => self::rupiah($balance),
+            'balance_value' => $balance,
+            'name' => $reseller->user?->name,
+            'phone' => $reseller->user?->phone,
+            'email' => $reseller->user?->email,
+            'referred_count' => $reseller->referred_users_count ?? $reseller->referredUsers()->count(),
+            'joined_at' => $reseller->created_at?->translatedFormat('d M Y'),
+        ];
+    }
+
+    public static function adminReseller(Reseller $reseller): array
+    {
+        return self::reseller($reseller) + [
+            'user_id' => $reseller->user_id,
+            'approved_at' => $reseller->approved_at?->translatedFormat('d M Y, H:i'),
+        ];
+    }
+
+    public static function resellerCommission(ResellerCommission $commission): array
+    {
+        return [
+            'id' => $commission->id,
+            'order_code' => $commission->order_code,
+            'order_items_total' => self::rupiah($commission->order_items_total),
+            'commission_type' => $commission->commission_type,
+            'commission_rate' => $commission->commission_rate,
+            'amount' => self::rupiah($commission->amount),
+            'amount_value' => $commission->amount,
+            'status' => $commission->status,
+            'status_label' => self::resellerCommissionStatusLabel($commission->status),
+            'date' => $commission->created_at?->translatedFormat('d M Y, H:i'),
+        ];
+    }
+
+    public static function resellerWithdrawal(ResellerWithdrawal $withdrawal): array
+    {
+        return [
+            'id' => $withdrawal->id,
+            'amount' => self::rupiah($withdrawal->amount),
+            'amount_value' => $withdrawal->amount,
+            'status' => $withdrawal->status,
+            'status_label' => self::resellerWithdrawalStatusLabel($withdrawal->status),
+            'admin_note' => $withdrawal->admin_note,
+            'requested_at' => $withdrawal->created_at?->translatedFormat('d M Y, H:i'),
+            'processed_at' => $withdrawal->processed_at?->translatedFormat('d M Y, H:i'),
+        ];
     }
 
     public static function shipment(Order $order): array
