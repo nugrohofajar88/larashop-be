@@ -843,6 +843,21 @@ class WaOrderService
     }
 
     /**
+     * Kata sambung Indonesia yang umum muncul di HAMPIR SEMUA deskripsi produk
+     * (bukan cuma di nama produk) - kalau ikut dipakai buat cari KANDIDAT di
+     * SQL (whereSearchTerms, mode OR), bisa meloloskan nyaris seluruh katalog
+     * jadi kandidat lalu kepotong oleh limit(25) SEBELUM sempat dinilai skornya
+     * - produk yang benar jadi tak pernah sampai ke tahap penilaian sama
+     * sekali. Ketahuan dari kasus nyata: order "... Chloroisobromine cynauric
+     * acid ..." gagal cocok karena kata "dan" di tengah nama produknya sendiri
+     * meloloskan 31 dari 32 produk jadi kandidat, produk yang benar kegeser
+     * keluar limit. TIDAK dipakai buat filter $words penilaian skor (di bawah)
+     * - di situ kontribusinya kecil & aman, cuma di tahap cari-kandidat SQL
+     * yang berbahaya.
+     */
+    private const SEARCH_STOPWORDS = ['dan', 'di', 'ke', 'dari', 'yang', 'untuk', 'atau', 'pada', 'dengan', 'ini', 'itu', 'serta', 'juga'];
+
+    /**
      * Cocokkan satu baris pesanan ke produk+varian di katalog. null kalau tak cocok.
      */
     protected function matchItem(string $raw): ?array
@@ -858,7 +873,12 @@ class WaOrderService
             return null;
         }
 
-        $candidates = Product::query()->where('public_status', 'active')->with('variants')->whereSearchTerms($words, true)->limit(25)->get();
+        $searchWords = array_values(array_diff($words, self::SEARCH_STOPWORDS));
+        if ($searchWords === []) {
+            $searchWords = $words;
+        }
+
+        $candidates = Product::query()->where('public_status', 'active')->with('variants')->whereSearchTerms($searchWords, true)->limit(25)->get();
 
         if ($candidates->isEmpty()) {
             return null;
