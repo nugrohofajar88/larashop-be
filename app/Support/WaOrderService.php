@@ -258,7 +258,10 @@ class WaOrderService
             $match = $this->matchItem($raw);
 
             if ($match === null) {
-                $errors[] = "❌ \"{$raw}\" tidak dikenali";
+                $suggestion = $this->suggestProductName($raw);
+                $errors[] = $suggestion !== null
+                    ? "❌ \"{$raw}\" tidak dikenali. Mungkin maksudmu *{$suggestion}*? Kalau benar, perbaiki nama produknya persis seperti itu."
+                    : "❌ \"{$raw}\" tidak dikenali";
                 continue;
             }
 
@@ -677,14 +680,18 @@ class WaOrderService
     }
 
     /**
-     * Cocokkan satu baris pesanan ke produk+varian di katalog. null kalau tak cocok.
+     * Bersihkan satu baris pesanan jadi {text, qty}: buang harga di akhir baris
+     * (": 140.000" / "- 140.000") lalu tangkap+buang penanda jumlah ("x2", "2x",
+     * "2 pcs/botol/pack/sachet"). Dipakai bersama oleh matchItem() (pencocokan
+     * ketat) dan suggestProductName() (saran "mungkin maksudmu" saat gagal cocok)
+     * supaya keduanya membaca baris yang sama persis.
+     *
+     * @return array{text:string, qty:int}
      */
-    protected function matchItem(string $raw): ?array
+    protected function extractItemText(string $raw): array
     {
-        // Buang harga di akhir baris (": 140.000" / "- 140.000").
         $text = (string) preg_replace('/[:\-]\s*(?:rp)?\s*[\d.,]+\s*$/i', '', $raw);
 
-        // Jumlah: "x2", "2x", "2 pcs/botol/pack/sachet".
         $qty = 1;
         if (preg_match('/\bx\s*(\d{1,3})\b/i', $text, $m)
             || preg_match('/\b(\d{1,3})\s*x\b/i', $text, $m)
@@ -692,6 +699,16 @@ class WaOrderService
             $qty = max(1, (int) $m[1]);
             $text = (string) preg_replace('/\bx\s*\d{1,3}\b|\b\d{1,3}\s*x\b|\b\d{1,3}\s*(?:pcs|pc|botol|pack|pak|sachet|sct|buah|biji)\b/i', ' ', $text);
         }
+
+        return ['text' => $text, 'qty' => $qty];
+    }
+
+    /**
+     * Cocokkan satu baris pesanan ke produk+varian di katalog. null kalau tak cocok.
+     */
+    protected function matchItem(string $raw): ?array
+    {
+        ['text' => $text, 'qty' => $qty] = $this->extractItemText($raw);
 
         $words = array_values(array_filter(
             preg_split('/[^a-z0-9]+/i', strtolower(trim($text)), -1, PREG_SPLIT_NO_EMPTY),
@@ -761,6 +778,40 @@ class WaOrderService
             'width_cm' => (float) ($v->width_cm ?? $p->width_cm ?? 0),
             'height_cm' => (float) ($v->height_cm ?? $p->height_cm ?? 0),
         ];
+    }
+
+    /**
+     * Saran "mungkin maksudmu ...?" saat matchItem() gagal cocok - dipakai HANYA
+     * untuk pesan error (tidak pernah dipakai buat auto-pilih/proses order, jadi
+     * tidak melemahkan ambang batas anti-salah-pilih di matchItem()). Pakai
+     * similar_text (persentase kemiripan ejaan) dibanding matchItem yang berbasis
+     * substring per-kata - sengaja lebih longgar karena cuma dipakai memandu
+     * pelanggan mengetik ulang, bukan menentukan produk yang dibeli.
+     */
+    protected function suggestProductName(string $raw): ?string
+    {
+        ['text' => $text] = $this->extractItemText($raw);
+        $text = trim((string) preg_replace('/[^a-z0-9 ]+/i', ' ', strtolower($text)));
+
+        if ($text === '') {
+            return null;
+        }
+
+        $best = null;
+        $bestPercent = 0.0;
+
+        foreach (Product::query()->where('public_status', 'active')->pluck('name') as $name) {
+            similar_text($text, strtolower((string) $name), $percent);
+
+            if ($percent > $bestPercent) {
+                $bestPercent = $percent;
+                $best = $name;
+            }
+        }
+
+        // Ambang 45% - cukup longgar buat typo/salah ketik wajar, tapi tetap
+        // menyaring input yang memang sama sekali bukan nama produk di katalog.
+        return $bestPercent >= 45.0 ? $best : null;
     }
 
     /**
