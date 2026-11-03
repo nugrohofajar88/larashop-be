@@ -873,7 +873,16 @@ class WaOrderService
             return null;
         }
 
-        $searchWords = array_values(array_diff($words, self::SEARCH_STOPWORDS));
+        // Sama seperti kata sambung di atas: angka 1 digit polos (mis. "1" dari
+        // baris "... 250ml 1" tanpa "x") juga generik banget - muncul di
+        // formulasi/konsentrasi hampir semua produk ("150EC", "1000ppm", dst) -
+        // kalau ikut dipakai cari kandidat, bisa meloloskan hampir seluruh
+        // katalog lagi persis seperti kasus "dan". Angka 2-3 digit (mis. "250")
+        // tetap dipakai - itu disambiguator ukuran yang beneran berguna.
+        $searchWords = array_values(array_filter(
+            array_diff($words, self::SEARCH_STOPWORDS),
+            fn (string $w): bool => ! (is_numeric($w) && strlen($w) === 1),
+        ));
         if ($searchWords === []) {
             $searchWords = $words;
         }
