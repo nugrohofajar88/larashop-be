@@ -77,6 +77,11 @@ class WaOrderService
             return "📌 Pesananmu tadi belum dikonfirmasi:\n\n".$this->buildConfirmation($session);
         }
 
+        // Di langkah konfirmasi nama produk: tampilkan ulang pertanyaannya.
+        if (($session['step'] ?? '') === 'await_item_fix') {
+            return "📌 Pesananmu tadi masih nunggu konfirmasi nama produk:\n\n".$this->askItemFix($session);
+        }
+
         $action = match ($session['step'] ?? '') {
             'await_form' => 'lengkapi & kirim form pesanannya',
             'await_destination' => 'ketik *kelurahan/desa, kecamatan, kota* tujuan',
@@ -123,6 +128,7 @@ class WaOrderService
             'await_destination' => $this->handleDestination($phone, $session, $text),
             'await_confirm' => $this->handleConfirm($phone, $session, $text),
             'await_courier' => $this->handleCourier($phone, $session, $text),
+            'await_item_fix' => $this->handleItemFix($phone, $session, $text),
             default => $this->start($phone),
         };
     }
@@ -253,15 +259,22 @@ class WaOrderService
         // Cocokkan tiap item ke katalog.
         $items = [];
         $errors = [];
+        // Item yang gagal cocok TAPI ada saran ejaan (lihat suggestProductNames())
+        // - dipisah dari $errors supaya, kalau cuma ini satu-satunya masalah,
+        // customer bisa konfirmasi/pilih nomor alih-alih ketik ulang form utuh.
+        $fixable = [];
 
         foreach ($form['items'] as $raw) {
             $match = $this->matchItem($raw);
 
             if ($match === null) {
-                $suggestion = $this->suggestProductName($raw);
-                $errors[] = $suggestion !== null
-                    ? "❌ \"{$raw}\" tidak dikenali. Mungkin maksudmu *{$suggestion}*? Kalau benar, perbaiki nama produknya persis seperti itu."
-                    : "❌ \"{$raw}\" tidak dikenali";
+                $suggestions = $this->suggestProductNames($raw);
+
+                if ($suggestions !== []) {
+                    $fixable[] = ['raw' => $raw, 'candidates' => $suggestions];
+                } else {
+                    $errors[] = "❌ \"{$raw}\" tidak dikenali";
+                }
                 continue;
             }
 
@@ -273,11 +286,137 @@ class WaOrderService
             $items[] = $match;
         }
 
+        // Kalau ada error LAIN (stok kurang / sama sekali tak ada saran) di luar
+        // item yang fixable, jangan masuk alur konfirmasi - tetap minta kirim
+        // ulang form utuh seperti biasa (lebih sederhana daripada campur dua
+        // mekanisme perbaikan sekaligus dalam satu giliran chat).
         if ($errors !== []) {
+            foreach ($fixable as $f) {
+                $errors[] = "❌ \"{$f['raw']}\" tidak dikenali. Mungkin maksudmu *{$f['candidates'][0]}*? Kalau benar, perbaiki nama produknya persis seperti itu.";
+            }
+
             return "Ada item yang belum beres:\n".implode("\n", $errors)."\n\n"
                 ."Perbaiki bagian *Pesanan*-nya lalu kirim ulang formnya ya. 🙏";
         }
 
+        if ($fixable !== []) {
+            $session['form'] = $form;
+            $session['item_fix_matched'] = $items;
+            $session['item_fix_queue'] = $fixable;
+            $session['item_fix_index'] = 0;
+            $session['step'] = 'await_item_fix';
+            $session['partial_form'] = $form;
+            $this->put($phone, $session);
+
+            return $this->askItemFix($session);
+        }
+
+        return $this->finalizeItems($phone, $session, $form, $items);
+    }
+
+    /**
+     * Tampilkan pertanyaan konfirmasi/pilihan untuk item fixable yang lagi
+     * diproses (session['item_fix_queue'][item_fix_index]).
+     */
+    protected function askItemFix(array $session): string
+    {
+        $current = $session['item_fix_queue'][$session['item_fix_index']];
+        $candidates = $current['candidates'];
+
+        if (count($candidates) === 1) {
+            return "❓ \"{$current['raw']}\" tidak dikenali persis. Mungkin maksudmu *{$candidates[0]}*?\n\n"
+                ."Balas *YA* kalau benar, atau *kirim ulang form* kalau ternyata beda.";
+        }
+
+        $list = collect($candidates)->map(fn (string $name, int $i): string => ($i + 1).". {$name}")->implode("\n");
+
+        return "❓ \"{$current['raw']}\" tidak dikenali persis. Maksudmu yang mana?\n\n{$list}\n\n"
+            ."Balas *nomor*nya, atau *kirim ulang form* kalau ternyata beda.";
+    }
+
+    /**
+     * Proses balasan customer saat ada item fixable yang nunggu
+     * konfirmasi/pilihan nomor (lihat askItemFix()). Nama yang dipilih
+     * digabung KE teks pesanan ASLI (bukan menggantikannya) lalu dicocokkan
+     * ulang lewat matchItem() biasa - supaya kata-kata asli dari customer
+     * (mis. ukuran "250") tetap ikut menentukan varian yang benar, dan tetap
+     * lolos ambang batas anti-salah-pilih yang sama seperti order normal.
+     */
+    protected function handleItemFix(string $phone, array $session, string $text): string
+    {
+        // Customer kirim ulang form (mis. ganti sendiri nama produknya) ->
+        // keluar dari alur konfirmasi, proses dari awal seperti biasa.
+        if (preg_match('/(alamat|pesanan)\s*:/i', $text) === 1) {
+            $session['step'] = 'await_form';
+
+            return $this->handleForm($phone, $session, $text);
+        }
+
+        $current = $session['item_fix_queue'][$session['item_fix_index']];
+        $candidates = $current['candidates'];
+        $lower = strtolower(trim($text));
+
+        $chosen = null;
+        if (count($candidates) === 1 && in_array($lower, ['ya', 'y', 'ok', 'oke', 'benar', 'betul', 'iya'], true)) {
+            $chosen = $candidates[0];
+        } elseif (preg_match('/^\d{1,2}$/', trim($text)) === 1) {
+            $n = (int) trim($text);
+            $chosen = $candidates[$n - 1] ?? null;
+
+            if ($chosen === null) {
+                return "Nomor tidak valid. Balas angka *1*–*".count($candidates)."* sesuai daftar di atas, atau *kirim ulang form* kalau ternyata beda.";
+            }
+        }
+
+        if ($chosen === null) {
+            return $this->askItemFix($session);
+        }
+
+        $match = $this->matchItem($current['raw'].' '.$chosen);
+
+        if ($match === null) {
+            // Seharusnya tak pernah terjadi (nama persis dari katalog + kata
+            // asli customer) - jaga-jaga saja supaya tak error ke customer.
+            $session['step'] = 'await_form';
+            $this->put($phone, $session);
+
+            return "Maaf, ada kendala mencocokkan produknya. Tolong *kirim ulang form* dengan nama produk yang benar ya.";
+        }
+
+        if ($match['qty'] > $match['stock']) {
+            $session['step'] = 'await_form';
+            $this->put($phone, $session);
+
+            return "⚠️ {$match['name']} ({$match['variant_label']}): stok tinggal {$match['stock']}, kurang dari yang dipesan.\n\n"
+                ."Perbaiki bagian *Pesanan*-nya lalu kirim ulang formnya ya. 🙏";
+        }
+
+        $matched = $session['item_fix_matched'];
+        $matched[] = $match;
+        $session['item_fix_matched'] = $matched;
+
+        $nextIndex = $session['item_fix_index'] + 1;
+
+        if (isset($session['item_fix_queue'][$nextIndex])) {
+            $session['item_fix_index'] = $nextIndex;
+            $this->put($phone, $session);
+
+            return "✅ Oke, *{$match['name']}* dipakai.\n\n".$this->askItemFix($session);
+        }
+
+        unset($session['item_fix_queue'], $session['item_fix_index'], $session['item_fix_matched']);
+
+        return $this->finalizeItems($phone, $session, $session['form'], $matched);
+    }
+
+    /**
+     * Ekor proses setelah semua item di form beres (cocok & stok cukup):
+     * simpan sesi, cari wilayah tujuan, lalu lanjut ke hitung ongkir &
+     * ringkasan konfirmasi. Dipakai baik dari alur form normal maupun
+     * setelah item fixable selesai dikonfirmasi (handleItemFix()).
+     */
+    protected function finalizeItems(string $phone, array $session, array $form, array $items): string
+    {
         // Pakai nomor WA pengirim kalau No HP di form kosong.
         if ($form['phone'] === '') {
             $form['phone'] = $phone;
@@ -683,7 +822,7 @@ class WaOrderService
      * Bersihkan satu baris pesanan jadi {text, qty}: buang harga di akhir baris
      * (": 140.000" / "- 140.000") lalu tangkap+buang penanda jumlah ("x2", "2x",
      * "2 pcs/botol/pack/sachet"). Dipakai bersama oleh matchItem() (pencocokan
-     * ketat) dan suggestProductName() (saran "mungkin maksudmu" saat gagal cocok)
+     * ketat) dan suggestProductNames() (saran "mungkin maksudmu" saat gagal cocok)
      * supaya keduanya membaca baris yang sama persis.
      *
      * @return array{text:string, qty:int}
@@ -782,36 +921,50 @@ class WaOrderService
 
     /**
      * Saran "mungkin maksudmu ...?" saat matchItem() gagal cocok - dipakai HANYA
-     * untuk pesan error (tidak pernah dipakai buat auto-pilih/proses order, jadi
-     * tidak melemahkan ambang batas anti-salah-pilih di matchItem()). Pakai
-     * similar_text (persentase kemiripan ejaan) dibanding matchItem yang berbasis
-     * substring per-kata - sengaja lebih longgar karena cuma dipakai memandu
-     * pelanggan mengetik ulang, bukan menentukan produk yang dibeli.
+     * untuk pesan error/konfirmasi (tidak pernah dipakai buat auto-pilih/proses
+     * order tanpa persetujuan customer, lihat handleItemFix()). Pakai similar_text
+     * (persentase kemiripan ejaan) dibanding matchItem yang berbasis substring
+     * per-kata - sengaja lebih longgar karena cuma dipakai memandu pelanggan,
+     * bukan menentukan produk yang dibeli secara sepihak.
+     *
+     * Bisa balikin lebih dari satu kandidat kalau beberapa produk sama-sama
+     * mirip (supaya customer diminta pilih nomor, bukan ditebak sepihak) -
+     * tapi kandidat lain hanya diikutkan kalau skornya dekat dengan yang
+     * terbaik (selisih <=10 poin), supaya tidak menampilkan daftar panjang
+     * berisi produk yang jelas tidak relevan.
+     *
+     * @return list<string>
      */
-    protected function suggestProductName(string $raw): ?string
+    protected function suggestProductNames(string $raw, int $limit = 3): array
     {
         ['text' => $text] = $this->extractItemText($raw);
         $text = trim((string) preg_replace('/[^a-z0-9 ]+/i', ' ', strtolower($text)));
 
         if ($text === '') {
-            return null;
+            return [];
         }
 
-        $best = null;
-        $bestPercent = 0.0;
-
+        $scored = [];
         foreach (Product::query()->where('public_status', 'active')->pluck('name') as $name) {
             similar_text($text, strtolower((string) $name), $percent);
 
-            if ($percent > $bestPercent) {
-                $bestPercent = $percent;
-                $best = $name;
+            // Ambang 45% - cukup longgar buat typo/salah ketik wajar, tapi tetap
+            // menyaring input yang memang sama sekali bukan nama produk di katalog.
+            if ($percent >= 45.0) {
+                $scored[] = ['name' => $name, 'percent' => $percent];
             }
         }
 
-        // Ambang 45% - cukup longgar buat typo/salah ketik wajar, tapi tetap
-        // menyaring input yang memang sama sekali bukan nama produk di katalog.
-        return $bestPercent >= 45.0 ? $best : null;
+        if ($scored === []) {
+            return [];
+        }
+
+        usort($scored, fn (array $a, array $b): int => $b['percent'] <=> $a['percent']);
+
+        $top = $scored[0]['percent'];
+        $scored = array_filter($scored, fn (array $s): bool => $s['percent'] >= $top - 10);
+
+        return array_slice(array_column($scored, 'name'), 0, $limit);
     }
 
     /**
