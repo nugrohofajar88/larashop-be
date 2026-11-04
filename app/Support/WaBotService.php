@@ -58,6 +58,16 @@ class WaBotService
                 $reply = $order->handle($phone, $message);
             } else {
                 $reply = $this->buildReply($message, $phone);
+
+                // "Ya"/angka/dsb nyasar TANPA sesi aktif - kemungkinan besar
+                // balasan telat atas pertanyaan konfirmasi bot yang sesinya
+                // sudah kedaluwarsa (lihat TTL_MINUTES di WaOrderService).
+                // Jangan didiamkan total spt pesan random lain - pelanggan
+                // butuh tahu kenapa "YA"-nya tak direspons apa pun.
+                if ($reply === null && $this->looksLikeStaleConfirmReply($message)) {
+                    $reply = "🙏 Maaf, sesi pesanan sebelumnya sudah berakhir (kelamaan dibalas). "
+                        ."Ketik */pesan* untuk mulai lagi, lalu kirim ulang form pesananmu ya.";
+                }
             }
         } catch (\Throwable $e) {
             Log::channel('wablas')->error('wablas.handle.exception', [
@@ -93,6 +103,19 @@ class WaBotService
         } catch (\Throwable) {
             // Jangan ganggu balasan kalau pencatatan gagal.
         }
+    }
+
+    /**
+     * Kata/angka pendek yang HANYA masuk akal sebagai balasan atas pertanyaan
+     * konfirmasi bot (mis. "Balas YA" / "Balas nomornya") - dipakai bersama
+     * WaOrderService::handleConfirm()/handleItemFix() SUPAYA daftarnya sinkron.
+     */
+    protected function looksLikeStaleConfirmReply(string $message): bool
+    {
+        $text = strtolower(trim($message));
+
+        return in_array($text, ['ya', 'y', 'ok', 'oke', 'betul', 'benar', 'setuju', 'iya', 'lanjut'], true)
+            || preg_match('/^\d{1,2}$/', $text) === 1;
     }
 
     /**

@@ -26,7 +26,13 @@ use Illuminate\Support\Str;
  */
 class WaOrderService
 {
-    private const TTL_MINUTES = 60;
+    // Sengaja beberapa jam (bukan 60 menit spt semula) - pelanggan sering
+    // butuh waktu mikir/sibuk sebelum balas pertanyaan konfirmasi (mis.
+    // "Mungkin maksudmu ...?"), apalagi makin lama alur order-nya (sekarang
+    // ada langkah konfirmasi tambahan). Ketahuan dari kasus nyata: sesi
+    // kedaluwarsa pas pelanggan balas "Ya" 1 jam 15 menit kemudian -> bot
+    // diam total, pelanggan merasa diabaikan.
+    private const TTL_MINUTES = 360;
 
     public function __construct(
         private readonly WhatsappGateway $wablas,
@@ -843,21 +849,6 @@ class WaOrderService
     }
 
     /**
-     * Kata sambung Indonesia yang umum muncul di HAMPIR SEMUA deskripsi produk
-     * (bukan cuma di nama produk) - kalau ikut dipakai buat cari KANDIDAT di
-     * SQL (whereSearchTerms, mode OR), bisa meloloskan nyaris seluruh katalog
-     * jadi kandidat lalu kepotong oleh limit(25) SEBELUM sempat dinilai skornya
-     * - produk yang benar jadi tak pernah sampai ke tahap penilaian sama
-     * sekali. Ketahuan dari kasus nyata: order "... Chloroisobromine cynauric
-     * acid ..." gagal cocok karena kata "dan" di tengah nama produknya sendiri
-     * meloloskan 31 dari 32 produk jadi kandidat, produk yang benar kegeser
-     * keluar limit. TIDAK dipakai buat filter $words penilaian skor (di bawah)
-     * - di situ kontribusinya kecil & aman, cuma di tahap cari-kandidat SQL
-     * yang berbahaya.
-     */
-    private const SEARCH_STOPWORDS = ['dan', 'di', 'ke', 'dari', 'yang', 'untuk', 'atau', 'pada', 'dengan', 'ini', 'itu', 'serta', 'juga'];
-
-    /**
      * Cocokkan satu baris pesanan ke produk+varian di katalog. null kalau tak cocok.
      */
     protected function matchItem(string $raw): ?array
@@ -873,21 +864,17 @@ class WaOrderService
             return null;
         }
 
-        // Sama seperti kata sambung di atas: angka 1 digit polos (mis. "1" dari
-        // baris "... 250ml 1" tanpa "x") juga generik banget - muncul di
-        // formulasi/konsentrasi hampir semua produk ("150EC", "1000ppm", dst) -
-        // kalau ikut dipakai cari kandidat, bisa meloloskan hampir seluruh
-        // katalog lagi persis seperti kasus "dan". Angka 2-3 digit (mis. "250")
-        // tetap dipakai - itu disambiguator ukuran yang beneran berguna.
-        $searchWords = array_values(array_filter(
-            array_diff($words, self::SEARCH_STOPWORDS),
-            fn (string $w): bool => ! (is_numeric($w) && strlen($w) === 1),
-        ));
-        if ($searchWords === []) {
-            $searchWords = $words;
-        }
-
-        $candidates = Product::query()->where('public_status', 'active')->with('variants')->whereSearchTerms($searchWords, true)->limit(25)->get();
+        // SENGAJA muat SEMUA produk aktif langsung (bukan pra-filter SQL
+        // whereSearchTerms()+limit()) - katalog toko ini kecil (puluhan
+        // produk), jadi biayanya murah, dan ini membuang KELAS BUG yang
+        // berulang kali ketahuan dari laporan nyata: kata/angka generik apa
+        // pun ("dan", angka 1 digit polos, "ml") bisa meloloskan hampir
+        // seluruh katalog jadi "kandidat" SQL lalu produk yang benar kepotong
+        // oleh limit SEBELUM sempat dinilai skornya - dan kata generik mana
+        // yang bakal jadi masalah berikutnya tak mungkin ditebak semua lewat
+        // daftar stopword. Dengan katalog sekecil ini, skor semua produk
+        // sekalian jauh lebih murah & tahan terhadap kata generik apa pun.
+        $candidates = Product::query()->where('public_status', 'active')->with('variants')->get();
 
         if ($candidates->isEmpty()) {
             return null;
