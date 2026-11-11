@@ -18,6 +18,26 @@ use Illuminate\Support\Str;
  */
 class WaBotService
 {
+    /**
+     * Batas aman panjang satu pesan WhatsApp.
+     *
+     * Kita memakai gateway unofficial (Wablas/Fonnte, lihat WHATSAPP_DRIVER),
+     * yang mengirim sebagai pesan teks WhatsApp biasa - batasnya 65.536
+     * karakter, BUKAN 4.096 seperti WhatsApp Business API resmi. Jadi katalog
+     * sepanjang apa pun yang realistis tetap muat dalam SATU pesan, dan
+     * pelanggan tidak pernah disuruh meminta "halaman berikutnya".
+     *
+     * Angka di bawah batas asli hanya sebagai margin. splitReply() di bawah
+     * adalah jaring pengaman lapis terakhir: dalam pemakaian normal ia tidak
+     * pernah aktif, tapi kalau katalog suatu hari benar-benar raksasa, isinya
+     * dikirim sebagai beberapa pesan berurutan - bukan terpotong diam-diam
+     * seperti bug limit(30) yang dulu.
+     */
+    private const MAX_MESSAGE_LENGTH = 60000;
+
+    /** Jumlah hasil /cari yang ditampilkan; sisanya diberi tahu jumlahnya. */
+    private const SEARCH_MAX_RESULTS = 20;
+
     public function __construct(
         private readonly WhatsappGateway $wablas,
     ) {
@@ -81,7 +101,12 @@ class WaBotService
         }
 
         if ($reply !== null && $reply !== '') {
-            $this->wablas->sendMessage($phone, $reply);
+            // Balasan panjang (mis. /katalog) dikirim sebagai beberapa pesan
+            // berurutan. Pelanggan tidak perlu melakukan apa pun - dan tidak
+            // ada bagian yang hilang tanpa pemberitahuan.
+            foreach ($this->splitReply($reply) as $part) {
+                $this->wablas->sendMessage($phone, $part);
+            }
         }
 
         // Rekam transkrip (masuk + keluar) untuk konteks AI & riwayat.
@@ -90,6 +115,99 @@ class WaBotService
         if ($reply !== null && $reply !== '') {
             $this->record($phone, 'out', $reply);
         }
+    }
+
+    /**
+     * Pecah balasan panjang jadi beberapa pesan WhatsApp.
+     *
+     * Pemecahan diusahakan di batas blok (baris kosong), lalu baris, baru
+     * terakhir dipotong per karakter - supaya satu produk tidak terbelah di
+     * tengah. Balasan normal (jauh di bawah batas) dikembalikan utuh sebagai
+     * satu elemen, jadi perilaku balasan lain tidak berubah sama sekali.
+     *
+     * @return array<int, string>
+     */
+    protected function splitReply(string $reply): array
+    {
+        if (mb_strlen($reply) <= self::MAX_MESSAGE_LENGTH) {
+            return [$reply];
+        }
+
+        $parts = [];
+        $current = '';
+
+        foreach (explode("\n\n", $reply) as $block) {
+            foreach ($this->splitBlock($block) as $piece) {
+                $calon = $current === '' ? $piece : $current."\n\n".$piece;
+
+                if (mb_strlen($calon) <= self::MAX_MESSAGE_LENGTH) {
+                    $current = $calon;
+
+                    continue;
+                }
+
+                if ($current !== '') {
+                    $parts[] = $current;
+                }
+
+                $current = $piece;
+            }
+        }
+
+        if ($current !== '') {
+            $parts[] = $current;
+        }
+
+        return $parts;
+    }
+
+    /**
+     * Pecah satu blok yang sendirian sudah lebih panjang dari batas pesan.
+     * Jarang terjadi (satu produk dengan sangat banyak varian), tapi tanpa ini
+     * blok raksasa akan dikirim utuh dan justru terpotong oleh WhatsApp.
+     *
+     * @return array<int, string>
+     */
+    protected function splitBlock(string $block): array
+    {
+        if (mb_strlen($block) <= self::MAX_MESSAGE_LENGTH) {
+            return [$block];
+        }
+
+        $pieces = [];
+        $current = '';
+
+        foreach (explode("\n", $block) as $line) {
+            $calon = $current === '' ? $line : $current."\n".$line;
+
+            if (mb_strlen($calon) <= self::MAX_MESSAGE_LENGTH) {
+                $current = $calon;
+
+                continue;
+            }
+
+            if ($current !== '') {
+                $pieces[] = $current;
+                $current = '';
+            }
+
+            // Baris tunggal yang masih kelewat panjang: potong per karakter.
+            if (mb_strlen($line) > self::MAX_MESSAGE_LENGTH) {
+                foreach (mb_str_split($line, self::MAX_MESSAGE_LENGTH) as $chunk) {
+                    $pieces[] = $chunk;
+                }
+
+                continue;
+            }
+
+            $current = $line;
+        }
+
+        if ($current !== '') {
+            $pieces[] = $current;
+        }
+
+        return $pieces;
     }
 
     protected function record(string $phone, string $direction, string $message): void
@@ -383,24 +501,27 @@ class WaBotService
 
     protected function listProducts(): string
     {
+        // TANPA limit. Dulu di sini ada limit(30) + orderBy('id'): begitu
+        // produk aktif lewat 30, produk yang PALING BARU (id terbesar) diam-diam
+        // tidak pernah muncul di /katalog dan pelanggan mengira stoknya habis.
+        // Katalog toko ini puluhan produk, dan balasan yang kepanjangan sudah
+        // dipecah otomatis oleh splitReply() - jadi tidak perlu limit maupun
+        // halaman yang harus diminta pelanggan.
         $products = Product::query()
             ->where('public_status', 'active')
+            ->available()
             ->with(['variants', 'category'])
             ->orderBy('id')
-            ->limit(30)
             ->get();
 
         $blocks = [];
 
         foreach ($products as $p) {
-            // Hanya varian aktif & ada stok.
+            // Hanya varian aktif & ada stok. Produk yang semua variannya habis
+            // sudah disaring di SQL oleh scopeAvailable().
             $inStock = $p->variants->filter(
                 fn ($v): bool => $v->is_active && (int) $v->stock > 0
             )->values();
-
-            if ($inStock->isEmpty()) {
-                continue; // lewati produk yang semua variannya habis
-            }
 
             $variantLines = $inStock->map(
                 fn ($v): string => "   • {$v->label} — ".$this->money((int) $v->price)
@@ -437,13 +558,22 @@ class WaBotService
                 ."Coba kata kunci lain, atau ketik */katalog* untuk lihat semua.";
         }
 
-        $lines = $products->map(
+        // Hasil dipotong HANYA di sini, bukan di SQL, supaya kita tahu jumlah
+        // sebenarnya dan bisa bilang "masih ada sisanya" - dulu kelebihannya
+        // hilang tanpa jejak dan produk baru (id terbesar) yang jadi korban.
+        $shown = $products->take(self::SEARCH_MAX_RESULTS);
+
+        $lines = $shown->map(
             fn (Product $p): string => "{$p->id}. {$p->name} — ".$this->money((int) $p->price)." (stok {$p->stock})"
         )->implode("\n");
 
-        $firstId = $products->first()->id;
+        $firstId = $shown->first()->id;
 
-        return "🔍 Hasil pencarian \"{$query}\":\n\n{$lines}\n\n"
+        $note = $products->count() > $shown->count()
+            ? "_Menampilkan {$shown->count()} dari {$products->count()} hasil — perjelas kata kuncinya._\n\n"
+            : '';
+
+        return "🔍 Hasil pencarian \"{$query}\":\n\n{$note}{$lines}\n\n"
             ."Untuk pesan ketik */pesan*, atau lihat detail */cek-{$firstId}*.";
     }
 
@@ -457,7 +587,6 @@ class WaBotService
             ->where('public_status', 'active')
             ->whereSearchTerms($terms, $matchAny)
             ->orderBy('id')
-            ->limit(20)
             ->get();
     }
 
@@ -489,7 +618,10 @@ class WaBotService
             }
         }
 
-        $catalog = Product::query()->where('public_status', 'active')->with(['category', 'variants'])->orderBy('id')->limit(40)->get()
+        // Tanpa limit: dulu limit(40) + orderBy('id') membuat produk terbaru
+        // tidak ikut jadi bahan jawaban AI, jadi bot bilang "belum tersedia"
+        // untuk produk yang sebenarnya ada.
+        $catalog = Product::query()->where('public_status', 'active')->with(['category', 'variants'])->orderBy('id')->get()
             ->map(function (Product $p): string {
                 $category = $p->category->name ?? '-';
                 $desc = $p->short_description
