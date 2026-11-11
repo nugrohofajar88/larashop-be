@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\CustomerAddress;
 use App\Models\Order;
 use App\Models\UserUniqueCode;
 use App\Support\ApiData;
@@ -27,7 +28,7 @@ class AdminOrderController extends Controller
         // 'draft' = order belum disubmit pelanggan (keranjang/checkout belum selesai),
         // jangan tampilkan di daftar pesanan admin.
         $query = Order::query()
-            ->with(['items', 'user'])
+            ->with(['items', 'user', 'address'])
             ->where('status', '!=', 'draft');
 
         if ($status !== '' && $status !== 'all') {
@@ -131,7 +132,7 @@ class AdminOrderController extends Controller
 
     public function show(Order $order): JsonResponse
     {
-        $order->load(['items', 'user', 'trackings']);
+        $order->load(['items', 'user', 'trackings', 'address']);
 
         return response()->json([
             'data' => $this->orderWithAdminExtras($order),
@@ -146,7 +147,7 @@ class AdminOrderController extends Controller
     public function showByCode(string $code): JsonResponse
     {
         $order = Order::query()->where('code', strtoupper($code))->firstOrFail();
-        $order->load(['items', 'user', 'trackings']);
+        $order->load(['items', 'user', 'trackings', 'address']);
 
         return response()->json([
             'data' => $this->orderWithAdminExtras($order),
@@ -162,6 +163,10 @@ class AdminOrderController extends Controller
     {
         return ApiData::order($order) + [
             'cod_service_fee' => (int) $order->cod_service_fee,
+            // Alamat MENTAH (tanpa kelurahan/kecamatan/kota yang
+            // ditempelkan addressSummary()) - dipakai mengisi form edit
+            // alamat. Yang ditampilkan di halaman tetap address_snapshot.
+            'recipient_address_line' => (string) $order->address?->address_line,
             'can_restore' => $order->isRestorable(),
             'is_printed' => $order->printed_at !== null,
             'printed_label' => $order->printed_at
@@ -179,12 +184,14 @@ class AdminOrderController extends Controller
     }
 
     /**
-     * Perbaiki nama/nomor HP penerima - dibatasi cuma untuk order yang belum
-     * di-booking ke ekspedisi (AWB masih kosong), supaya tidak mismatch dgn
-     * data yang sudah terlanjur dikirim ke Komerce/kurir. Kasus nyata: booking
-     * gagal karena "receiver phone number invalid" (customer salah ketik saat
-     * checkout, mis. cuma "88") dan admin butuh cara memperbaikinya tanpa
-     * minta customer batalkan & order ulang.
+     * Perbaiki nama/nomor HP/alamat penerima - dibatasi cuma untuk order yang
+     * belum di-booking ke ekspedisi (AWB masih kosong), supaya tidak mismatch
+     * dgn data yang sudah terlanjur dikirim ke Komerce/kurir. Kasus nyata:
+     * booking gagal karena "receiver phone number invalid" (customer salah
+     * ketik saat checkout, mis. cuma "88") dan admin butuh cara memperbaikinya
+     * tanpa minta customer batalkan & order ulang. Kasus kedua: alamat order
+     * WA kemasukan seluruh isi pesan bot sehingga booking ditolak
+     * ("receiver address must not exceed 250 characters").
      */
     public function updateRecipient(Request $request, Order $order): JsonResponse
     {
@@ -197,6 +204,12 @@ class AdminOrderController extends Controller
         $validated = $request->validate([
             'recipient_name' => ['required', 'string', 'max:255'],
             'recipient_phone' => ['required', 'string', 'max:20', 'regex:/^[0-9+\-\s]+$/'],
+            // Alamat opsional: pemanggil lama yang cuma mengirim nama+HP tetap
+            // jalan, dan field ini dibiarkan apa adanya kalau tidak dikirim.
+            'address_line' => [
+                'sometimes', 'required', 'string',
+                'max:'.KomerceShipmentService::MAX_RECEIVER_ADDRESS_LENGTH,
+            ],
         ]);
 
         $phoneDigits = preg_replace('/\D/', '', $validated['recipient_phone']);
@@ -211,7 +224,35 @@ class AdminOrderController extends Controller
             'recipient_phone' => $validated['recipient_phone'],
         ]);
 
-        $order->refresh()->load(['items', 'user']);
+        // Alamat kirim tersimpan DI DUA TEMPAT dengan peran berbeda:
+        //   customer_addresses.address_line -> yang dikirim ke ekspedisi saat
+        //       booking & dicetak di label (dibaca live).
+        //   orders.address_snapshot         -> teks beku yang ditampilkan di
+        //       halaman order admin maupun pelanggan.
+        // Snapshot sengaja TIDAK ikut berubah kalau pelanggan mengedit alamat
+        // tersimpannya nanti (riwayat order harus tetap memotret kondisi saat
+        // order dibuat). Konsekuensinya, memperbaiki alamat lewat halaman
+        // Pelanggan saja bikin keduanya berbeda: booking benar tapi layar
+        // masih memperlihatkan teks lama. Di sini keduanya diperbarui bersama,
+        // jadi inilah satu-satunya jalur yang benar untuk membetulkan alamat
+        // kirim sebuah order.
+        if (array_key_exists('address_line', $validated)) {
+            $address = CustomerAddress::query()->find($order->customer_address_id);
+
+            if (! $address) {
+                throw ValidationException::withMessages([
+                    'address_line' => 'Order ini tidak punya data alamat yang bisa diubah.',
+                ]);
+            }
+
+            $address->update(['address_line' => trim($validated['address_line'])]);
+
+            $order->update([
+                'address_snapshot' => ApiData::addressSummary($address->refresh()),
+            ]);
+        }
+
+        $order->refresh()->load(['items', 'user', 'address']);
 
         return response()->json([
             'data' => $this->orderWithAdminExtras($order),
@@ -223,7 +264,7 @@ class AdminOrderController extends Controller
     {
         $result = app(\App\Support\OrderPaymentService::class)->markPaid($order, 'admin');
 
-        $order->refresh()->load(['items', 'user']);
+        $order->refresh()->load(['items', 'user', 'address']);
 
         return response()->json([
             'data' => ApiData::order($order),
@@ -275,7 +316,7 @@ class AdminOrderController extends Controller
             ]);
         }
 
-        $order->refresh()->load(['items', 'user']);
+        $order->refresh()->load(['items', 'user', 'address']);
 
         return response()->json([
             'data' => ApiData::order($order),
@@ -352,7 +393,7 @@ class AdminOrderController extends Controller
 
         $order->logTracking('cancelled', 'admin', $komerceWarning ? ['note' => $komerceWarning] : []);
 
-        $order->refresh()->load(['items', 'user']);
+        $order->refresh()->load(['items', 'user', 'address']);
 
         app(\App\Support\OrderCancellationNotifier::class)->send($order, $wasAlreadyPaid);
 
@@ -366,7 +407,7 @@ class AdminOrderController extends Controller
     public function restore(Order $order): JsonResponse
     {
         $order = app(\App\Support\OrderRestoreService::class)->restore($order, 'admin');
-        $order->load(['items', 'user']);
+        $order->load(['items', 'user', 'address']);
 
         return response()->json([
             'data' => $this->orderWithAdminExtras($order),
@@ -388,7 +429,7 @@ class AdminOrderController extends Controller
             'shipment_note' => 'Permintaan pembatalan ditolak admin. Pesanan tetap diproses.',
         ]);
 
-        $order->refresh()->load(['items', 'user']);
+        $order->refresh()->load(['items', 'user', 'address']);
 
         return response()->json([
             'data' => ApiData::order($order),
@@ -408,7 +449,7 @@ class AdminOrderController extends Controller
 
         $order->logTracking('in_transit', 'admin');
 
-        $order->refresh()->load(['items', 'user']);
+        $order->refresh()->load(['items', 'user', 'address']);
 
         return response()->json([
             'data' => ApiData::order($order),
@@ -458,7 +499,7 @@ class AdminOrderController extends Controller
             'note' => 'Pickup '.$validated['pickup_date'].' '.$validated['pickup_time'].' ('.$validated['pickup_vehicle'].')',
         ]);
 
-        $order->refresh()->load(['items', 'user']);
+        $order->refresh()->load(['items', 'user', 'address']);
 
         return response()->json([
             'data' => ApiData::order($order),
@@ -841,7 +882,7 @@ class AdminOrderController extends Controller
 
         $order->logTracking('delivered', 'admin');
 
-        $order->refresh()->load(['items', 'user']);
+        $order->refresh()->load(['items', 'user', 'address']);
 
         return response()->json([
             'data' => ApiData::order($order),
@@ -859,7 +900,7 @@ class AdminOrderController extends Controller
     {
         $result = app(\App\Support\ShippingService::class)->syncOrderStatus($order, 'admin');
 
-        $order->refresh()->load(['items', 'user']);
+        $order->refresh()->load(['items', 'user', 'address']);
 
         return response()->json([
             'data' => $this->orderWithAdminExtras($order),

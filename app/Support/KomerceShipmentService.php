@@ -17,6 +17,13 @@ use Illuminate\Support\Facades\Log;
  */
 class KomerceShipmentService
 {
+    // Komerce menolak booking kalau receiver_address lebih dari 250
+    // karakter ("Create order failed: receiver address must not exceed
+    // 250 characters"). Batas yang kita pakai sengaja lebih ketat supaya
+    // ada ruang aman, dan supaya alamat kepanjangan dicegat SEJAK DIINPUT
+    // - bukan baru ketahuan pas booking order yang telanjur dibuat.
+    public const MAX_RECEIVER_ADDRESS_LENGTH = 200;
+
     public function enabled(): bool
     {
         return (bool) config('services.komerce_delivery.enabled')

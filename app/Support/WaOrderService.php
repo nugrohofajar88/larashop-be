@@ -34,11 +34,8 @@ class WaOrderService
     // diam total, pelanggan merasa diabaikan.
     private const TTL_MINUTES = 360;
 
-    // Komerce menolak booking kalau receiver_address > 250 karakter.
-    // Batas kita dibuat lebih ketat supaya masih ada ruang aman dan
-    // pelanggan dicegat SEJAK ISI FORM, bukan baru ketahuan pas admin
-    // mencoba booking order yang sudah telanjur dibuat.
-    private const MAX_ADDRESS_LENGTH = 200;
+    // Batas panjang alamat milik Komerce - lihat konstanta di sana.
+    private const MAX_ADDRESS_LENGTH = KomerceShipmentService::MAX_RECEIVER_ADDRESS_LENGTH;
 
     public function __construct(
         private readonly WhatsappGateway $wablas,
