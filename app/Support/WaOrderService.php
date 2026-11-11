@@ -34,6 +34,12 @@ class WaOrderService
     // diam total, pelanggan merasa diabaikan.
     private const TTL_MINUTES = 360;
 
+    // Komerce menolak booking kalau receiver_address > 250 karakter.
+    // Batas kita dibuat lebih ketat supaya masih ada ruang aman dan
+    // pelanggan dicegat SEJAK ISI FORM, bukan baru ketahuan pas admin
+    // mencoba booking order yang sudah telanjur dibuat.
+    private const MAX_ADDRESS_LENGTH = 200;
+
     public function __construct(
         private readonly WhatsappGateway $wablas,
         private readonly QrislyService $qrisly,
@@ -259,6 +265,33 @@ class WaOrderService
             return "Mohon lengkapi: *".implode('*, *', $missing)."*.\n\nKirim ulang dengan format:\n"
                 ."Nama: {$nameLine}\nNo HP: {$form['phone']}\nAlamat: {$addressLine}\n"
                 ."Kelurahan/Desa: {$kelurahanLine}\nKecamatan: {$kecamatanLine}\nKota/Kabupaten: {$kotaLine}\n"
+                ."Pesanan:\n{$itemLines}";
+        }
+
+        // Alamat kepanjangan -> order PASTI gagal dibooking ke ekspedisi.
+        // Dicegat di sini, sebelum order terbentuk, supaya tidak jadi order
+        // "lunas tapi tak bisa dikirim" yang harus dibetulkan manual lewat
+        // admin. Penyebab paling sering: pelanggan menyalin balik seluruh
+        // pesan bot ke dalam kolom Alamat.
+        $addressLength = mb_strlen($form['address']);
+        if ($addressLength > self::MAX_ADDRESS_LENGTH) {
+            // Alamat dikosongkan di partial_form supaya pelanggan menulis
+            // ulang; field lain yang sudah benar tetap dipertahankan.
+            $form['address'] = '';
+            $session['partial_form'] = $form;
+            $this->put($phone, $session);
+
+            $itemLines = $form['items'] !== []
+                ? implode("\n", array_map(fn (string $i): string => "- {$i}", $form['items']))
+                : '- ';
+
+            return "Alamatnya kepanjangan ({$addressLength} karakter, maksimal ".self::MAX_ADDRESS_LENGTH.") 🙏\n\n"
+                ."Isi *Alamat* dengan nama jalan, nomor rumah, dan RT/RW saja. "
+                ."Kelurahan, kecamatan, dan kota sudah punya barisnya sendiri, "
+                ."jadi tidak perlu diulang di sini.\n\n"
+                ."Kirim ulang dengan format:\n"
+                ."Nama: {$form['name']}\nNo HP: {$form['phone']}\nAlamat: Jl./nomor rumah, RT/RW\n"
+                ."Kelurahan/Desa: {$form['kelurahan']}\nKecamatan: {$form['kecamatan']}\nKota/Kabupaten: {$form['kota']}\n"
                 ."Pesanan:\n{$itemLines}";
         }
 
@@ -576,9 +609,18 @@ class WaOrderService
     {
         $lower = strtolower(trim($text));
 
+        // Pesan RINGKASAN KONFIRMASI milik bot sendiri juga memuat baris
+        // "Alamat: ...". Jadi kalau pelanggan menyalin/mengutip balik pesan itu
+        // (sering terjadi — biasanya sambil bertanya "ini gimana kak?"), tanpa
+        // penjaga ini bot salah mengira itu form baru lalu mem-parse ulang
+        // isinya. Begitu dikenali sebagai gema pesan sendiri, biarkan jatuh ke
+        // cabang di bawah yang menampilkan ulang ringkasan + pilihan.
+        $isEchoRingkasan = str_contains($text, 'Konfirmasi Pesanan')
+            || str_contains($text, 'Pastikan TUJUAN di atas sudah benar');
+
         // Pelanggan KIRIM ULANG FORM (mis. perbaiki alamat) -> proses ulang dari awal:
         // re-parse, cocokkan item, resolve wilayah, lalu HITUNG ULANG ONGKIR.
-        if (preg_match('/(alamat|pesanan)\s*:/i', $text) === 1) {
+        if (! $isEchoRingkasan && preg_match('/(alamat|pesanan)\s*:/i', $text) === 1) {
             return $this->handleForm($phone, $session, $text);
         }
 
@@ -769,28 +811,41 @@ class WaOrderService
         // Alamat/Kelurahan/Kecamatan/Kota dipisah jadi field sendiri-sendiri
         // (bukan lagi satu blok "Alamat" bebas) supaya pencarian tujuan ongkir
         // di resolveDestination() tidak perlu menebak-nebak dari prosa alamat.
-        // Tiap field berhenti menangkap pas ketemu label berikutnya (atau akhir
-        // teks), jadi field yang dikosongkan pelanggan tidak "bocor" menangkap
-        // isi baris field selanjutnya.
-        $nextLabel = '(?:kelurahan|desa|kecamatan|kota|kabupaten|pesanan)\b[^\n]*:';
+        // Batas akhir sebuah field. DULU isinya cuma daftar label form
+        // (kelurahan|desa|kecamatan|kota|kabupaten|pesanan), dan itu bocor
+        // parah: kalau pelanggan MENYALIN BALIK pesan konfirmasi bot - yang
+        // juga memuat baris "Alamat: ..." tapi diikuti "Tujuan:", rincian
+        // item, "Subtotal:", instruksi, dst - tidak ada satu pun label
+        // penghenti yang cocok, jadi "Alamat" MENELAN SELURUH SISA PESAN.
+        // Alamat jadi ratusan karakter dan booking ke ekspedisi ditolak
+        // ("Create order failed: receiver address must not exceed 250
+        // characters"). Sekarang field berhenti di baris kosong, baris
+        // berlabel APA PUN ("Tujuan:", "Ongkir (JNT - EZ):", "Subtotal:"),
+        // atau baris yang diawali bullet - alamat multi-baris biasa
+        // (mis. "Jl. Mawar 5" + "RT 02 RW 04") tetap tertangkap utuh.
+        $stopLine = '(?:'
+            .'[ \t]*\n'            // baris kosong
+            .'|[ \t]*[^\n:]{1,40}:' // baris berlabel apa pun
+            .'|[ \t]*[•▪*]'        // baris bullet
+            .')';
 
         $address = '';
-        if (preg_match('/alamat[ \t]*:[ \t]*(.*?)(?:\n\s*'.$nextLabel.'|\z)/is', $text, $m)) {
+        if (preg_match('/alamat[ \t]*:[ \t]*(.*?)(?:\n'.$stopLine.'|\z)/is', $text, $m)) {
             $address = trim(preg_replace('/\s+/', ' ', $m[1]));
         }
 
         $kelurahan = '';
-        if (preg_match('/\b(?:kelurahan|desa)\b[^\n:]*:[ \t]*(.*?)(?:\n\s*'.$nextLabel.'|\z)/is', $text, $m)) {
+        if (preg_match('/\b(?:kelurahan|desa)\b[^\n:]*:[ \t]*(.*?)(?:\n'.$stopLine.'|\z)/is', $text, $m)) {
             $kelurahan = trim(preg_replace('/\s+/', ' ', $m[1]));
         }
 
         $kecamatan = '';
-        if (preg_match('/\bkecamatan\b[^\n:]*:[ \t]*(.*?)(?:\n\s*'.$nextLabel.'|\z)/is', $text, $m)) {
+        if (preg_match('/\bkecamatan\b[^\n:]*:[ \t]*(.*?)(?:\n'.$stopLine.'|\z)/is', $text, $m)) {
             $kecamatan = trim(preg_replace('/\s+/', ' ', $m[1]));
         }
 
         $kota = '';
-        if (preg_match('/\b(?:kota|kabupaten)\b[^\n:]*:[ \t]*(.*?)(?:\n\s*'.$nextLabel.'|\z)/is', $text, $m)) {
+        if (preg_match('/\b(?:kota|kabupaten)\b[^\n:]*:[ \t]*(.*?)(?:\n'.$stopLine.'|\z)/is', $text, $m)) {
             $kota = trim(preg_replace('/\s+/', ' ', $m[1]));
         }
 
